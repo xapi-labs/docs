@@ -1,5 +1,6 @@
 instances:
   - url: xapi-to.docs.buildwithfern.com
+    custom-domain: docs.xapi.to
 
 title: xAPI Documentation
 

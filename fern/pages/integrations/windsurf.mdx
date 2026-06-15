@@ -1,0 +1,49 @@
+---
+title: Windsurf
+subtitle: Windsurf IDE 接入 xAPI —— 覆盖 OpenAI Base URL 与 API Key 即可。
+---
+
+[Windsurf](https://codeium.com/windsurf) 内置 OpenAI 兼容客户端,通过覆盖 base URL
+与 API Key 即可接入 xAPI。xAPI 接受 `Authorization: Bearer` 鉴权,与 Windsurf
+默认行为兼容。
+
+## 配置
+
+打开 Windsurf → Settings → Cascade 设置,找到 Provider 配置:
+
+| 字段 | 值 |
+| --- | --- |
+| Base URL | `https://ai.xapi.to/v1` |
+| API Key | `sk-xapi-...` |
+| Model | `claude-opus-4-7` 或其他 [模型清单](/concepts/models) 中的模型 |
+
+<Warning>
+  Base URL 必须**以 `/v1` 结尾**。
+</Warning>
+
+## 验证
+
+在 Cascade 面板中发送测试请求,确认收到流式回复。
+[xapi.to](https://xapi.to) 控制台 → Usage Records 可查询本次调用。
+
+## 锁定到特定上游(可选)
+
+修改 Base URL 即可,各上游子域参见 [模型与价格](/concepts/models)。
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="模型不支持 / model not found">
+    改为 [模型清单](/concepts/models) 中明确列出的模型,
+    注意命名规则(SkyAPI 使用横线)。
+  </Accordion>
+
+  <Accordion title="部分功能仍走 Codeium">
+    Windsurf 的 Supercomplete(代码补全)走 Codeium 自有服务,
+    任何第三方网关均无法接管。受 base URL 覆盖影响的仅为 Cascade Chat 等显式 AI 功能。
+  </Accordion>
+
+  <Accordion title="费用查询">
+    不在 Windsurf 内展示。请前往 [xapi.to](https://xapi.to) 控制台 → Usage Records。
+  </Accordion>
+</AccordionGroup>

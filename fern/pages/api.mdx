@@ -1,0 +1,209 @@
+---
+title: API 参考
+subtitle: 端点、鉴权、请求字段、响应头、错误码完整参考。
+---
+
+## 端点总览
+
+xAPI 的主接入点是 `https://ai.xapi.to`,**同时支持** Anthropic Messages 与
+OpenAI Chat Completions 两套协议:
+
+| 端点 | 协议 |
+| --- | --- |
+| `POST https://ai.xapi.to/v1/messages` | Anthropic Messages |
+| `POST https://ai.xapi.to/{strategy}/v1/messages` | Anthropic,显式选策略 |
+| `POST https://ai.xapi.to/v1/chat/completions` | OpenAI Chat Completions |
+| `POST https://ai.xapi.to/{strategy}/v1/chat/completions` | OpenAI,显式选策略 |
+| `POST https://ai.xapi.to/v1/messages/count_tokens` | 暂未实现,返回 404 |
+| `GET https://ai.xapi.to/openapi.json` | 实时 OpenAPI 3.0 规范(无需鉴权) |
+
+其中 `{strategy}` 取值为 `default | quality | speed | cost`。
+
+<Tip>
+  需要锁定特定上游(跳过自动路由)时,可使用直连子域
+  `https://{host}.p.xapi.to/{path}` 作为高级用法 ——
+  但聚合路由已经能满足绝大多数场景,**优先使用 `ai.xapi.to`**。
+</Tip>
+
+## 鉴权
+
+所有端点统一接受**两种**鉴权头,任选其一:
+
+```http
+x-api-key: sk-xapi-...
+Authorization: Bearer sk-xapi-...
+```
+
+| 客户端类型 | 默认头 | 是否需要额外配置 |
+| --- | --- | --- |
+| Anthropic SDK / Claude Code | `x-api-key` | 否 |
+| OpenAI SDK / Codex / Cursor | `Authorization: Bearer` | 否 |
+| 手写 curl / fetch | 任选 | — |
+
+## Anthropic Messages 请求
+
+<ParamField path="model" type="string" required>
+  模型 ID。例如 `claude-opus-4-7`。完整清单参见 [模型与价格](/concepts/models)。
+</ParamField>
+
+<ParamField path="max_tokens" type="integer" required>
+  生成的最大 token 数。
+</ParamField>
+
+<ParamField path="messages" type="array" required>
+  对话消息数组,每项含 `role`(`user` | `assistant`)和 `content`。
+</ParamField>
+
+<ParamField path="system" type="string">
+  可选 system prompt。
+</ParamField>
+
+<ParamField path="stream" type="boolean" default="false">
+  是否流式返回。流式响应通过 SSE 传输,事件结构与 Anthropic 官方一致。
+</ParamField>
+
+<ParamField path="temperature" type="number" default="1.0">
+  采样温度,范围 0–1。
+</ParamField>
+
+<ParamField path="tools" type="array">
+  Tool / function 定义,透传至上游。
+</ParamField>
+
+<ParamField path="tool_choice" type="object">
+  Tool 选择策略,透传至上游。
+</ParamField>
+
+请求体除 `stream` 与 `priority` 字段外,其余内容全量透传至上游。
+所有以 `anthropic-` 开头的协议头(`anthropic-version`、`anthropic-beta` 等)
+亦原样透传。
+
+## OpenAI Chat Completions 请求
+
+<ParamField path="model" type="string" required>
+  模型 ID,按 [模型与价格](/concepts/models) 中的命名传入。例如 `gpt-5.5`、`claude-opus-4-7`。
+</ParamField>
+
+<ParamField path="messages" type="array" required>
+  对话消息数组。
+</ParamField>
+
+<ParamField path="stream" type="boolean" default="false">
+  是否流式返回。
+</ParamField>
+
+<ParamField path="temperature" type="number" default="1.0" />
+
+<ParamField path="tools" type="array" />
+
+## 路由策略
+
+聚合路由通过 URL 路径前缀指定策略,**不影响请求体或响应体**:
+
+| 路径 | 策略 |
+| --- | --- |
+| `ai.xapi.to/v1/...` | 默认(等价于 quality) |
+| `ai.xapi.to/quality/v1/...` | 显式 quality |
+| `ai.xapi.to/speed/v1/...` | speed |
+| `ai.xapi.to/cost/v1/...` | cost |
+
+## 响应头
+
+<ResponseField name="X-XAPI-Request-Id" type="string">
+  平台生成的 UUID,所有响应必返回。排障时附在工单中。
+</ResponseField>
+
+<ResponseField name="X-XAPI-Source" type="string">
+  `provider`(上游响应)或 `platform`(网关层错误)。
+</ResponseField>
+
+<ResponseField name="X-AI-Cost" type="string">
+  本次扣款金额(USD,8 位小数)。**仅在非流式 + 上游 2xx 时返回**。
+</ResponseField>
+
+<ResponseField name="X-AI-Tokens-Input" type="integer">
+  输入 token 数。仅非流式 + 上游 2xx。
+</ResponseField>
+
+<ResponseField name="X-AI-Tokens-Output" type="integer">
+  输出 token 数。仅非流式 + 上游 2xx。
+</ResponseField>
+
+<ResponseField name="X-AI-Tokens-Total" type="integer">
+  总 token 数。仅非流式 + 上游 2xx。
+</ResponseField>
+
+<ResponseField name="X-Routing-Provider" type="string">
+  聚合路由实际命中的上游标识(如 `skyapi`)。
+</ResponseField>
+
+<ResponseField name="X-Routing-Attempts" type="integer">
+  尝试次数。`> 1` 表示发生过自动故障转移。
+</ResponseField>
+
+<ResponseField name="X-Routing-Fallback" type="boolean">
+  是否使用了 fallback 上游。
+</ResponseField>
+
+<Warning>
+  **流式响应不会在 response headers 中返回 `X-AI-Cost`** ——
+  响应头在 stream 开始时已发送至客户端。
+  如需获取流式调用的实际费用,请查询控制台 → Usage Records。
+</Warning>
+
+## 错误码
+
+### 平台错误(`X-XAPI-Source: platform`)
+
+| HTTP | type | 含义 |
+| --: | --- | --- |
+| 400 | `invalid_request_error` | 字段校验失败 / 模型未在 `tokenPricing` 中配置 |
+| 401 | `authentication_error` | API Key 无效或缺失 |
+| 402 | Payment Required | 账户余额不足 / API Key 限额超出 |
+| 429 | `rate_limit_error` | 上游限频 |
+| 502 | `server_error` · `ALL_PROVIDERS_FAILED` | 候选池内所有上游均失败 |
+| 504 | `server_error` | 上游请求超时 |
+
+### 上游错误(`X-XAPI-Source: provider`)
+
+HTTP 状态码与响应体由上游决定,xAPI 原样透传,不进行任何重写。
+
+## OpenAPI 自动生成
+
+每个上游均提供实时生成的 OpenAPI 3.0 规范:
+
+```bash
+curl https://ai.xapi.to/openapi.json
+```
+
+每个 endpoint 在 spec 中包含 `x-billing` 扩展字段:
+
+```json
+{
+  "x-billing": {
+    "type": "PER_TOKEN",
+    "pricingMode": "PER_MODEL",
+    "allowedModels": ["gpt-5.5", "claude-opus-4-7"],
+    "strictModelValidation": true,
+    "modelPricing": {
+      "claude-opus-4-7": {
+        "inputPricePerToken": 0.0000010,
+        "outputPricePerToken": 0.0000050,
+        "cacheCreationPricePerToken": 0.00000125,
+        "cacheReadPricePerToken": 0.0000005
+      }
+    },
+    "streaming": { "supported": true, "format": "sse" },
+    "estimatedMaxTokens": 4096
+  }
+}
+```
+
+可直接导入 Swagger UI、Stoplight、Postman 等工具查阅与调试。
+
+## 平台限制
+
+- **请求体大小**:≤ 20 MB(Traefik body-limit middleware)
+- **连接超时**:2 分钟(`UPSTREAM_TIMEOUT_MS`,流式传输阶段不受此限制)
+- **重定向**:不跟随(`maxRedirects: 0`,3xx 状态码直接透传给调用方)
+- **SSRF 防护**:转发前完成 DNS 解析与 IP pin,纵深防御 DNS rebinding

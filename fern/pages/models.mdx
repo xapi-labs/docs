@@ -1,0 +1,105 @@
+---
+title: 模型与价格
+subtitle: xAPI 常用模型清单 —— 每个模型当前可拿到的最低价(USD / 1M tokens)。
+---
+
+下表为 xAPI 常用模型的**最低价**(`cost` 策略自动命中)。
+价格单位:**USD / 1M tokens**,显示为 `输入 / 输出`。
+
+## Anthropic Claude
+
+| 模型 | 上下文 | 输入 / 输出 |
+| --- | --- | --: |
+| `claude-opus-4-7` | ≤200K | \$0.65 / \$3.30 |
+| `claude-opus-4-7` | >200K | \$2.00 / \$7.50 |
+| `claude-opus-4-6` | 200K | \$0.65 / \$3.30 |
+| `claude-sonnet-4-6` | 200K | \$0.39 / \$1.95 |
+| `claude-sonnet-4-5` | 200K | \$0.60 / \$3.00 |
+| `claude-haiku-4-5` | 200K | \$0.13 / \$0.65 |
+
+<Note>
+  `claude-opus-4-7` 单次请求 prompt context **超过 200K** 时,
+  整次请求按 \$2.00 / \$7.50 档计费(而非仅对超出部分加价)。
+</Note>
+
+## OpenAI
+
+| 模型 | 上下文 | 输入 / 输出 |
+| --- | --- | --: |
+| `gpt-5.5` | 128K | \$0.50 / \$3.00 |
+
+## 图像生成
+
+| 模型 | 价格 |
+| --- | --: |
+| `gpt-image-2` | \$0.006 / \$0.032 |
+
+## 自动路由到最低价
+
+调用 `https://ai.xapi.to/cost/v1/messages` 时,网关会自动命中当前最便宜的健康上游。
+如需锁定特定上游,可使用直连子域 `{host}.p.xapi.to/v1`(见 [API 参考](/reference/api))。
+
+## 模型名匹配规则
+
+网关按以下顺序解析请求中的 `model` 字段:
+
+<Steps>
+  <Step title="精确匹配">
+    在端点的 `tokenPricing` 配置中查找完全相同的 key。
+  </Step>
+  <Step title="大小写不敏感">
+    `Claude-Opus-4-7` 与 `claude-opus-4-7` 等价。
+  </Step>
+  <Step title="去除供应商前缀">
+    `anthropic/claude-opus-4-7` 会先剥离 `anthropic/` 再尝试匹配。
+  </Step>
+  <Step title="default 兜底">
+    若上述均未命中且端点配置了 `default` 定价,使用 `default`。
+  </Step>
+  <Step title="拒绝">
+    若端点未配置 `default`,返回 **HTTP 400**,响应体中列出 `allowedModels`。
+  </Step>
+</Steps>
+
+## 计费类型
+
+xAPI 端点的 `billingType` 字段有三种取值,AI 端点统一使用 `PER_TOKEN`:
+
+- **PER_TOKEN**:按 input / output token 数量 × 模型单价计费(AI 端点)
+- **PER_CALL**:按调用次数计费(常规 REST API)
+- **PER_RESOURCE**:按资源用量计费(如图像生成按张数)
+
+统一的 proxy 服务通过 host-based gateway 路由处理所有 billing 类型,
+对调用方完全透明,无需关心后端如何计费。
+
+## 缓存 Token 差异化计费
+
+Claude 系支持 prompt caching,xAPI 对缓存读写分别计费:
+
+- `cacheCreationPricePerToken` —— 缓存写入,通常为输入价 × 1.25
+- `cacheReadPricePerToken` —— 缓存命中读取,通常为输入价 × 0.10
+
+<Note>
+  OpenAI 的 `cached_tokens` 字段嵌套在 `prompt_tokens` 之内,
+  xAPI 在统计阶段自动归一化:
+  `inputTokens = prompt_tokens − cache_creation_tokens − cache_read_tokens`,
+  保持 `inputTokens` 始终代表非缓存的普通输入 token。
+</Note>
+
+## 模型选型建议
+
+| 场景 | 推荐 |
+| --- | --- |
+| 代码重构 / 复杂推理 | `claude-opus-4-7` |
+| 高频对话 / 客服 | `claude-haiku-4-5` 或 `gpt-5.5` |
+| 中等推理 / 平衡性能与成本 | `claude-sonnet-4-6` |
+| 图像生成 | `gpt-image-2` |
+| 不确定 | 走聚合路由 `quality` 策略 |
+
+## 实时数据来源
+
+以上数据每周与生产环境 `api_endpoints.tokenPricing` 同步。实时清单:
+
+- 浏览器:[xapi.to/ai](https://xapi.to/ai)
+- API:`GET https://ai.xapi.to/openapi.json` 获取完整 OpenAPI spec,
+  其中 `x-billing.modelPricing` 字段包含完整定价

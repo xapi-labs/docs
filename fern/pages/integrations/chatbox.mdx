@@ -1,0 +1,92 @@
+---
+title: Chatbox 等桌面客户端
+subtitle: 桌面与 Web 聊天客户端接入 xAPI —— 标准 OpenAI provider 配置即可。
+---
+
+桌面与 Web 聊天客户端(Chatbox、NextChat、LobeChat、OpenWebUI 等)
+均使用 OpenAI 协议与 `Authorization: Bearer` 鉴权,与 xAPI 完全兼容。
+
+<Tabs>
+  <Tab title="Chatbox">
+    Settings → API Settings → Model Provider 选择 **OpenAI**:
+
+    | 字段 | 值 |
+    | --- | --- |
+    | API Host | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+    | Model | `claude-opus-4-7` 或其他 [模型清单](/concepts/models) 中的模型 |
+  </Tab>
+
+  <Tab title="NextChat">
+    Settings → Custom Endpoint:
+
+    | 字段 | 值 |
+    | --- | --- |
+    | OpenAI Endpoint | `https://ai.xapi.to` |
+    | API Key | `sk-xapi-...` |
+
+    <Note>
+      NextChat 内部会自动拼接 `/v1/chat/completions`,因此 Endpoint **不要**自带 `/v1`。
+    </Note>
+  </Tab>
+
+  <Tab title="LobeChat">
+    Settings → 语言模型 → OpenAI → 显示更多:
+
+    | 字段 | 值 |
+    | --- | --- |
+    | 代理地址 | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+  </Tab>
+
+  <Tab title="OpenWebUI">
+    Admin Panel → Connections → OpenAI:
+
+    | 字段 | 值 |
+    | --- | --- |
+    | Base URL | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+  </Tab>
+</Tabs>
+
+## 通过 SDK 直接调用
+
+<CodeBlocks>
+  <CodeBlock title="Python">
+    ```python
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url="https://ai.xapi.to/v1",
+        api_key="sk-xapi-...",
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": "Hello"}],
+    )
+    print(response.choices[0].message.content)
+    ```
+  </CodeBlock>
+
+  <CodeBlock title="TypeScript">
+    ```typescript
+    import OpenAI from 'openai';
+
+    const client = new OpenAI({
+      baseURL: 'https://ai.xapi.to/v1',
+      apiKey: 'sk-xapi-...',
+    });
+
+    const response = await client.chat.completions.create({
+      model: 'gpt-5.5',
+      messages: [{ role: 'user', content: 'Hello' }],
+    });
+    console.log(response.choices[0].message.content);
+    ```
+  </CodeBlock>
+</CodeBlocks>
+
+## 模型清单
+
+参见 [模型与价格](/concepts/models)。

@@ -1,0 +1,44 @@
+---
+title: Continue.dev
+subtitle: VS Code 与 JetBrains 插件 Continue 接入 xAPI —— 标准 OpenAI provider 配置。
+---
+
+[Continue.dev](https://continue.dev) 是 VS Code 与 JetBrains 平台的开源 AI 助手,
+通过标准 OpenAI provider 配置即可接入 xAPI。
+
+<Steps>
+  <Step title="安装">
+    - **VS Code**:Extensions → 搜索 "Continue" → 安装
+    - **JetBrains**:Plugins → 搜索 "Continue" → 安装
+  </Step>
+
+  <Step title="配置 ~/.continue/config.yaml">
+    ```yaml
+    models:
+      - name: GPT-5.5 (xAPI)
+        provider: openai
+        model: gpt-5.5
+        apiBase: https://ai.xapi.to/v1
+        apiKey: sk-xapi-...
+
+      - name: Claude Opus 4.7 (xAPI)
+        provider: openai
+        model: claude-opus-4-7
+        apiBase: https://ai.xapi.to/v1
+        apiKey: sk-xapi-...
+    ```
+
+    <Note>
+      Continue 使用 `Authorization: Bearer ${apiKey}` 发送请求,与 xAPI 完全兼容。
+    </Note>
+  </Step>
+
+  <Step title="验证">
+    在 Continue 侧栏选择已配置的模型,发送测试请求。
+    在 [xapi.to](https://xapi.to) 控制台 → Usage Records 可查看本次调用。
+  </Step>
+</Steps>
+
+## 锁定到特定上游(可选)
+
+修改 `apiBase` 字段,各上游子域参见 [模型与价格](/concepts/models)。

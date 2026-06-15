@@ -1,0 +1,37 @@
+---
+title: Cline
+subtitle: VS Code 插件 Cline 接入 xAPI —— OpenAI Compatible Provider,直接配置。
+---
+
+[Cline](https://github.com/cline/cline) 是 VS Code 平台的 agentic AI 助手,
+通过 OpenAI Compatible Provider 接入 xAPI。
+
+<Steps>
+  <Step title="安装">
+    VS Code → Extensions → 搜索 "Cline" → 安装。
+  </Step>
+
+  <Step title="配置">
+    打开 Cline 侧栏的设置面板,**API Provider** 选择 **OpenAI Compatible**:
+
+    | 字段 | 值 |
+    | --- | --- |
+    | Base URL | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+    | Model ID | `claude-opus-4-7` 或 [模型清单](/concepts/models) 中任一可用模型 |
+
+    <Note>
+      Base URL 必须**以 `/v1` 结尾**。Cline 使用 `Authorization: Bearer` 发送 API Key,
+      与 xAPI 完全兼容,无需配置 Custom Headers。
+    </Note>
+  </Step>
+
+  <Step title="验证">
+    打开 Cline 侧栏,发送测试任务(如 `list files in current folder`),
+    若成功返回文件列表即接入完成。
+  </Step>
+</Steps>
+
+## 锁定到特定上游(可选)
+
+修改 Base URL 即可,各上游子域参见 [模型与价格](/concepts/models)。

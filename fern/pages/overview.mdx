@@ -1,0 +1,74 @@
+---
+title: 概览
+subtitle: 一个 API 密钥,跨多家上游统一调用 Claude / GPT / Gemini 等主流模型。
+---
+
+xAPI 是一个统一的 AI 网关。将客户端的 base URL 指向 `https://ai.xapi.to`,
+即可使用同一个密钥调用 Claude、GPT、Gemini、DeepSeek、Kimi 等主流模型。
+
+## 工作机制
+
+xAPI 在统一入口下聚合多家上游服务 —— 包括官方 API、经过验证的第三方中转,
+以及逆向访问通道。调用方无需关心后端实际命中的供应商,网关根据所选策略
+(`quality`、`speed`、`cost`),在每次请求时挑选当前健康且最匹配的上游执行。
+
+这套架构为调用方提供三项核心能力:
+
+<CardGroup cols={3}>
+  <Card title="单一接口" icon="layer-group">
+    切换模型仅需修改 `model` 字段,SDK、协议、业务代码均无需调整。
+    支持 Anthropic Messages 与 OpenAI Chat Completions 两套主流协议。
+  </Card>
+  <Card title="跨源价差" icon="arrow-trend-down">
+    同一模型在不同上游下报价可相差近一个数量级。`cost` 策略下,
+    网关自动路由至当前最便宜的健康上游。
+  </Card>
+  <Card title="自动故障转移" icon="shield-check">
+    上游 5xx / 限频 / 超时,网关在毫秒级切换至备用源继续完成请求。
+    路由轨迹通过响应头透明返回。
+  </Card>
+</CardGroup>
+
+## 调用方式
+
+<CardGroup cols={2}>
+  <Card title="聚合路由(推荐)" href="/intro/quickstart" icon="route">
+    `https://ai.xapi.to`
+    Anthropic 协议 · 网关自动选源 · 支持 `quality / speed / cost` 三档策略
+  </Card>
+  <Card title="直连上游" href="/reference/api" icon="server">
+    `https://{host}.p.xapi.to/v1`
+    OpenAI / Anthropic / Gemini 原生协议 · 显式指定上游
+  </Card>
+</CardGroup>
+
+## 适用场景
+
+- **使用 Claude Code、Codex、Cursor、Cline 等开发工具的工程师** —— 单密钥多源备份,
+  规避封号、限频与价格波动风险
+- **运行大规模 AI 工作流的团队** —— `cost` 策略下显著降低 token 成本,
+  同时保留官方源级别的稳定性
+- **多模型应用** —— 单套 SDK 统一调用多家模型,
+  不被任何单一供应商的发布节奏与定价策略绑定
+
+<Tip>
+  新用户可在 [xapi.to](https://xapi.to) 控制台一键创建 API Key 并领取测试额度,
+  无需信用卡。
+</Tip>
+
+## 进一步阅读
+
+<CardGroup cols={2}>
+  <Card title="快速开始" href="/intro/quickstart" icon="rocket">
+    一条 curl 完成首次调用
+  </Card>
+  <Card title="Claude Code 接入" href="/integrations/claude-code" icon="terminal">
+    Anthropic 官方 CLI · 推荐
+  </Card>
+  <Card title="模型与价格" href="/concepts/models" icon="coins">
+    实时定价 · 跨上游对比表
+  </Card>
+  <Card title="设计原则" href="/concepts/principles" icon="diagram-project">
+    了解架构选择背后的考量
+  </Card>
+</CardGroup>

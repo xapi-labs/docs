@@ -1,0 +1,111 @@
+---
+title: Codex
+subtitle: OpenAI Codex CLI 接入 xAPI —— 两个环境变量,直连 SkyAPI 上游。
+---
+
+[Codex](https://github.com/openai/codex) 是 OpenAI 官方的命令行 coding agent,
+基于 OpenAI Chat Completions 协议。xAPI 接受 `Authorization: Bearer` 鉴权头,
+与 Codex 默认行为完全兼容,接入仅需两个环境变量。
+
+<Steps>
+  <Step title="安装">
+    ```bash
+    npm install -g @openai/codex
+    ```
+  </Step>
+
+  <Step title="创建 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台 → **API Keys** → 新建。
+  </Step>
+
+  <Step title="配置环境变量">
+    写入 `~/.zshrc` 或 `~/.bashrc`:
+
+    ```bash
+    export OPENAI_BASE_URL="https://ai.xapi.to/v1"
+    export OPENAI_API_KEY="sk-xapi-..."
+    export OPENAI_DEFAULT_MODEL="gpt-5.5"
+    ```
+
+    加载新环境:
+
+    ```bash
+    source ~/.zshrc
+    ```
+
+    <Note>
+      Base URL 必须**以 `/v1` 结尾**,Codex 强制要求。
+      Codex 内部使用 `Authorization: Bearer ${OPENAI_API_KEY}` 鉴权 ——
+      xAPI 直接接受这种格式。
+    </Note>
+  </Step>
+
+  <Step title="验证">
+    ```bash
+    codex "用 Python 实现 Fibonacci 函数"
+    ```
+
+    确认收到流式输出后,可在 [xapi.to](https://xapi.to) 控制台 → Usage Records 查看调用记录。
+  </Step>
+</Steps>
+
+## 锁定到特定上游(可选)
+
+修改 `OPENAI_BASE_URL`:
+
+| 上游 | base URL |
+| --- | --- |
+| SkyAPI(模型最全) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max(官方源) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken 逆向(成本最低) | `https://supertoken.p.xapi.to/v1` |
+
+## 切换模型
+
+修改 `OPENAI_DEFAULT_MODEL`。SkyAPI 在 OpenAI 协议层对 Anthropic Messages 做了适配,
+以下模型均可在 Chat Completions 接口下调用:
+
+- `gpt-5.5`
+- `claude-opus-4-7` / `claude-sonnet-4-6` / `claude-haiku-4-5`
+
+完整清单参见 [模型与价格](/concepts/models)。
+
+## 项目级隔离
+
+如需仅在特定项目中使用 xAPI,可配合 [direnv](https://direnv.net/),
+在项目根目录创建 `.envrc`:
+
+```bash
+export OPENAI_BASE_URL="https://ai.xapi.to/v1"
+export OPENAI_API_KEY="sk-xapi-..."
+export OPENAI_DEFAULT_MODEL="gpt-5.5"
+```
+
+执行 `direnv allow` 后,该目录下的 `codex` 命令将使用 xAPI,
+其他位置仍走原配置。
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="404 Not Found">
+    `OPENAI_BASE_URL` 缺少 `/v1` 后缀。完整格式:`https://ai.xapi.to/v1`。
+  </Accordion>
+
+  <Accordion title='400 Model "xxx" is not configured for this endpoint'>
+    默认模型不在所选上游的支持列表中。
+    改为 [模型清单](/concepts/models) 中实际存在的名称。
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    - 通过 `echo $OPENAI_API_KEY` 确认密钥正确
+    - 检查空格:`echo -n "$OPENAI_API_KEY" | wc -c`
+  </Accordion>
+</AccordionGroup>
+
+## 与 Claude Code 的选型对比
+
+| 维度 | Claude Code | Codex |
+| --- | --- | --- |
+| 协议 | Anthropic Messages | OpenAI Chat Completions |
+| 接入端点 | `ai.xapi.to`(聚合) | `{host}.ai.xapi.to`(直连) |
+| 自动故障转移 | 支持(跨多上游) | 不支持(单上游) |
+| 推荐场景 | 期望网关全自动选源 | 需明确锁定特定上游 |

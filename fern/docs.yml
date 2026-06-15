@@ -1,0 +1,103 @@
+instances:
+  - url: xapi-to.docs.buildwithfern.com
+
+title: xAPI Documentation
+
+logo:
+  href: /
+  light: ./assets/logo-wordmark-light.svg
+  dark: ./assets/logo-wordmark-dark.svg
+  height: 28
+
+favicon: ./assets/logo.png
+
+navigation:
+  - section: 介绍
+    slug: intro
+    contents:
+      - page: 概览
+        path: pages/overview.mdx
+        slug: overview
+      - page: 快速开始
+        path: pages/quickstart.mdx
+        slug: quickstart
+
+  - section: 概念
+    slug: concepts
+    contents:
+      - page: 设计原则
+        path: pages/principles.mdx
+        slug: principles
+      - page: 模型与价格
+        path: pages/models.mdx
+        slug: models
+
+  - section: 集成
+    slug: integrations
+    contents:
+      - page: Claude Code
+        path: pages/integrations/claude-code.mdx
+        slug: claude-code
+      - page: Codex
+        path: pages/integrations/codex.mdx
+        slug: codex
+      - page: Cursor
+        path: pages/integrations/cursor.mdx
+        slug: cursor
+      - page: OpenClaw
+        path: pages/integrations/openclaw.mdx
+        slug: openclaw
+      - page: Hermes Agent
+        path: pages/integrations/hermes.mdx
+        slug: hermes
+      - page: Continue.dev
+        path: pages/integrations/continue-dev.mdx
+        slug: continue-dev
+      - page: Cline
+        path: pages/integrations/cline.mdx
+        slug: cline
+      - page: Windsurf
+        path: pages/integrations/windsurf.mdx
+        slug: windsurf
+      - page: Chatbox 等桌面客户端
+        path: pages/integrations/chatbox.mdx
+        slug: chatbox
+
+  - section: 参考
+    slug: reference
+    contents:
+      - page: API 参考
+        path: pages/api.mdx
+        slug: api
+      - page: 计费机制
+        path: pages/billing.mdx
+        slug: billing
+      - page: 常见问题
+        path: pages/faq.mdx
+        slug: faq
+
+colors:
+  accent-primary:
+    light: "#10b981"
+    dark: "#5fd0a8"
+  background:
+    light: "#ffffff"
+    dark: "#08090b"
+  sidebar-background:
+    light: "#fafafa"
+    dark: "#0a0c10"
+
+navbar-links:
+  - type: minimal
+    text: 官网
+    url: https://xapi.to
+  - type: filled
+    text: 获取 API Key →
+    url: https://xapi.to
+
+layout:
+  page-width: 1456px
+  content-width: 720px
+  sidebar-width: 280px
+
+default-language: typescript

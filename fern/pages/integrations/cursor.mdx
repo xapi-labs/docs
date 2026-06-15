@@ -1,0 +1,108 @@
+---
+title: Cursor
+subtitle: 在 Cursor 中覆盖 OpenAI Base URL 与 API Key —— 一个密钥调用所有模型。
+---
+
+[Cursor](https://cursor.com) 内置 OpenAI 兼容客户端,通过覆盖 base URL 与 API Key
+即可接入 xAPI,无需任何代理或额外配置。xAPI 直连上游子域接受 `Authorization: Bearer`,
+与 Cursor 默认发送的请求头一致。
+
+<Steps>
+  <Step title="安装 Cursor">
+    访问 [cursor.com](https://cursor.com) 下载并安装对应平台的版本。
+  </Step>
+
+  <Step title="创建 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台 → **API Keys** → 新建,
+    密钥形如 `sk-xapi-...`。
+  </Step>
+
+  <Step title="打开 Models 设置">
+    - macOS:`⌘ + ,` 或菜单 → Cursor → Settings
+    - Windows / Linux:`Ctrl + ,` 或 File → Preferences → Settings
+    - 左侧选 **Models**
+  </Step>
+
+  <Step title="配置 xAPI">
+    滚动至 **OpenAI API Key** 区块:
+
+    | 字段 | 值 |
+    | --- | --- |
+    | OpenAI API Key | `sk-xapi-...` |
+    | Override OpenAI Base URL | `https://ai.xapi.to/v1` |
+
+    点 **Verify** —— 看到绿色 ✓ 表示连接通过。
+
+    <Warning>
+      Base URL 必须**以 `/v1` 结尾**,Cursor 强制要求。
+    </Warning>
+  </Step>
+
+  <Step title="选择模型">
+    在 **Models** 列表中:
+
+    1. **取消勾选** Cursor 内置的所有 OpenAI 模型(`gpt-4`、`gpt-4o` 等) ——
+       避免它们继续走 Cursor 自家端点,消耗订阅额度
+    2. 点 **+ Add Model**,加入 xAPI 支持的模型:
+
+    ```
+    gpt-5.5
+    claude-opus-4-7
+    claude-sonnet-4-6
+    claude-haiku-4-5
+    ```
+
+    完整清单参见 [模型与价格](/concepts/models)。
+
+    3. 勾选新添加的模型
+  </Step>
+
+  <Step title="验证">
+    打开任意文件,按 `⌘ + L` 打开 Chat:
+
+    - 顶部模型选择器选择 `claude-opus-4-7`
+    - 发送测试请求,如 "解释一下这个文件做了什么"
+
+    应当立即看到流式输出。在 [xapi.to](https://xapi.to) 控制台 → Usage Records
+    可查看本次调用记录。
+  </Step>
+</Steps>
+
+## 锁定到特定上游(可选)
+
+修改 Base URL 即可:
+
+| 上游 | Override OpenAI Base URL |
+| --- | --- |
+| SkyAPI(模型最全) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max(官方源) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken 逆向(成本最低) | `https://supertoken.p.xapi.to/v1` |
+
+<Note>
+  Cursor 仅支持单一 base URL 配置,不支持多上游 failover。
+  如需自动跨上游切换,改用 [Claude Code](/integrations/claude-code) 走聚合路由。
+</Note>
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="Verify 红 ✗ / 连接失败">
+    - Base URL 缺少 `/v1` 后缀。正确格式:`https://ai.xapi.to/v1`
+    - 密钥含空格或不可见字符,重新复制粘贴
+    - 公司网络拦截:关闭 VPN / 代理后重试
+  </Accordion>
+
+  <Accordion title="model not found">
+    - 模型名拼写需与 [模型清单](/concepts/models) 完全一致
+    - SkyAPI 使用横线命名:`claude-opus-4-7` ✓,`claude-opus-4.7` ✗
+  </Accordion>
+
+  <Accordion title="部分功能仍走官方">
+    - Cursor 的 Tab 自动补全**始终走 Cursor 自有服务**,任何第三方网关均无法接管
+    - 受 base URL 覆盖影响的范围:Chat、Compose、`⌘+K` 等显式 AI 功能
+  </Accordion>
+
+  <Accordion title="费用查询">
+    - 不在 Cursor 内展示。请前往 [xapi.to](https://xapi.to) 控制台 → Usage Records
+  </Accordion>
+</AccordionGroup>

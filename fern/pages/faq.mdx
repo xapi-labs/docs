@@ -1,0 +1,199 @@
+---
+title: 常见问题
+subtitle: 账户、密钥、计费、模型、集成排障 —— 最常见问题与处理方式。
+---
+
+## 账户与密钥
+
+<AccordionGroup>
+  <Accordion title="如何获取 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台 → **API Keys** → 新建。
+    密钥**仅在创建时显示一次**,请妥善保管;丢失后无法找回,需删除原密钥重新创建。
+  </Accordion>
+
+  <Accordion title="单账号可创建多少密钥">
+    无硬性数量限制。建议为每个使用场景(团队成员、CI、Agent、不同项目)
+    分别签发独立密钥,并通过 `balanceLimit` 配置各自的扣费上限,
+    避免单点异常影响整体余额。
+  </Accordion>
+
+  <Accordion title="如何为密钥设置独立限额">
+    控制台 → **API Keys** → 选择目标密钥 → 设置 `balanceLimit`(USD)。
+    该密钥累计扣款达到上限后,后续调用返回 HTTP 402,
+    但**不影响**主账户余额池及其他密钥。
+  </Accordion>
+
+  <Accordion title="密钥泄露后如何处理">
+    立即在控制台 → **API Keys** → 撤销(Revoke)。
+    撤销后即时失效,同时建议核查 Usage Records 是否存在异常调用。
+  </Accordion>
+</AccordionGroup>
+
+## 模型与协议
+
+<AccordionGroup>
+  <Accordion title="支持哪些模型">
+    兼容 Claude、OpenAI、Gemini、DeepSeek、Kimi、GLM 等主流模型,
+    与上游同步更新。完整清单见 [模型与价格](/concepts/models)。
+  </Accordion>
+
+  <Accordion title="模型名应如何填写">
+    按所选上游的**原生命名**填写。例如 SkyAPI 上 Claude 系使用横线
+    (`claude-opus-4-7`),OpenRouter 风格使用斜杠加点
+    (`anthropic/claude-opus-4.6`)。
+
+    聚合路由 `ai.xapi.to` 会执行不区分大小写的模糊匹配;
+    直连上游子域时必须**精确匹配**该上游的支持列表。
+  </Accordion>
+
+  <Accordion title="支持哪些协议">
+    - **Anthropic Messages**(`POST /v1/messages`):聚合路由
+    - **OpenAI Chat Completions**(`POST /v1/chat/completions`):直连上游子域
+
+    所有兼容上述两套协议的客户端(Claude Code、Cursor、Codex、Continue 等)均可直接接入。
+  </Accordion>
+
+  <Accordion title="支持流式输出吗">
+    支持。在请求体中设置 `"stream": true`,xAPI 透明透传上游的 SSE 流。
+
+    **注意**:流式响应**不会**在 response headers 中返回最终的 `X-AI-Cost` ——
+    响应头在流式传输开始时即已发送至客户端。
+    如需查询费用,请通过控制台 → Usage Records 获取,
+    或从最后一个 chunk 的 `usage` 字段解析。
+  </Accordion>
+
+  <Accordion title="支持 Tool / Function Calling 吗">
+    支持。请求体中的 `tools` 与 `tool_choice` 字段全量透传给上游。
+    具体支持情况由上游决定 —— Claude 系全部支持;GPT-5.5 支持;
+    Gemini 通过 OpenAI 协议层适配。
+  </Accordion>
+
+  <Accordion title="支持多模态吗">
+    支持。在 messages 中传入 `image_url`(OpenAI 格式)或
+    `content: [{type: "image", source: {...}}]`(Anthropic 格式)即可,
+    网关原样透传。
+  </Accordion>
+</AccordionGroup>
+
+## 计费与额度
+
+<AccordionGroup>
+  <Accordion title="如何充值">
+    控制台 → **Billing** → Top up。支持加密货币(BSC 链 USDT / USDC,
+    通过 x402 协议自动确认)与 Stripe 信用卡。
+  </Accordion>
+
+  <Accordion title="如何查询每次调用的费用">
+    - **非流式**:响应头 `X-AI-Cost`(USD,8 位小数)
+    - **流式**:控制台 → **Usage Records**,该行的 `cost` 字段
+    - **批量查询**:控制台支持按日期、密钥、模型筛选,并导出 CSV
+  </Accordion>
+
+  <Accordion title="价格如何计算">
+    按 per-model 动态定价:
+
+    ```
+    费用 = inputTokens × inputPrice
+        + outputTokens × outputPrice
+        + cacheCreationTokens × cacheCreationPrice
+        + cacheReadTokens × cacheReadPrice
+    ```
+
+    部分模型(如 Claude `>200K` 上下文)有阶梯定价。
+    完整价格表见 [模型与价格](/concepts/models)。
+  </Accordion>
+
+  <Accordion title="余额用完后会怎样">
+    后续调用直接返回 HTTP 402,**不会**扣至负值。
+    充值后即恢复服务,已扣金额不予退还。
+  </Accordion>
+
+  <Accordion title="失败的请求是否扣费">
+    通常**不扣费**。xAPI 采用预扣 → 结算两阶段:
+
+    | 场景 | 是否扣费 |
+    | --- | --- |
+    | 上游 4xx / 5xx / 超时 | 否,预扣全额释放 |
+    | 网关层错误(401 / 402 / 400) | 否,未进入预扣阶段 |
+    | 客户端中断非流式请求 | 否 |
+    | **客户端中断流式请求** | **是**,按累计输出长度估算扣费 |
+  </Accordion>
+
+</AccordionGroup>
+
+## 集成排障
+
+<AccordionGroup>
+  <Accordion title="Claude Code 仍走官方 endpoint">
+    - 同时设置了 `ANTHROPIC_API_KEY` 与 `ANTHROPIC_AUTH_TOKEN` 时,前者优先。
+      执行 `unset ANTHROPIC_API_KEY` 并重启终端
+    - 当前 shell 未加载新环境变量:`source ~/.zshrc`
+    - 在 session 中输入 `/status` 确认当前 base URL
+  </Accordion>
+
+  <Accordion title="Cursor / Codex / Windsurf Verify 失败">
+    - Base URL 缺少 `/v1` 后缀。正确格式:`https://ai.xapi.to/v1`
+    - API Key 字段直接填 `sk-xapi-...`,客户端会用 `Authorization: Bearer` 发出,xAPI 直接接受
+    - 密钥含空格或不可见字符,重新复制粘贴
+    - 公司网络拦截:关闭 VPN / 代理后重试
+  </Accordion>
+
+  <Accordion title="400 Model is not configured for this endpoint">
+    当前模型不在所选上游的支持列表中:
+
+    1. 改为 [模型清单](/concepts/models) 中明确列出的模型
+    2. 或改用聚合路由 `ai.xapi.to`(支持跨上游模糊匹配)
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    - 密钥拼写错误或包含空格。
+      通过 `echo -n "$XAPI_KEY" | wc -c` 检查字符数
+    - 密钥未生效或已被撤销。在控制台 → API Keys 中确认密钥状态
+    - 所有端点都接受 `xapi-key`、`Authorization: Bearer`、`x-api-key` 三种头之一
+  </Accordion>
+
+  <Accordion title="429 rate_limit_error">
+    上游限频。聚合路由会自动重试至其他健康上游
+    (通过 `X-Routing-Attempts > 1` 确认)。
+    直连上游时建议等待几秒重试或切换至其他上游。
+  </Accordion>
+</AccordionGroup>
+
+## 隐私与安全
+
+<AccordionGroup>
+  <Accordion title="xAPI 是否存储提示词或响应">
+    **不存储**。xAPI 仅记录元数据:模型、token 数量、扣费金额、
+    HTTP 状态码、响应时间,用于计费与监控。
+  </Accordion>
+
+  <Accordion title="密钥在传输过程中如何保护">
+    全程 HTTPS 加密。网关侧通过 SHA-256 哈希进行缓存校验,
+    **明文密钥不写入日志**。
+  </Accordion>
+
+  <Accordion title="上游能否获取我的 xAPI 密钥">
+    不能。xAPI 在调用上游时使用平台维护的上游凭据
+    (数据库中 AES 加密存储),`sk-xapi-...` 仅用于 xAPI 内部识别用户。
+  </Accordion>
+</AccordionGroup>
+
+## 通用排障流程
+
+<Steps>
+  <Step title="检查 X-XAPI-Source">
+    - `provider` → 上游返回的错误,查看响应体中上游的原始信息
+    - `platform` → 网关层错误(鉴权 / 余额 / 校验等)
+  </Step>
+  <Step title="记录 X-XAPI-Request-Id">
+    提交工单时附上,便于在日志中定位。
+  </Step>
+  <Step title="检查 X-Routing-Attempts">
+    `> 1` 表示发生过自动故障转移,可能存在不稳定上游。
+  </Step>
+  <Step title="查询 Usage Records">
+    控制台 → **Usage Records** 是对账与排障的权威来源。
+  </Step>
+</Steps>
+
+仍无法定位时,请在 [xapi.to](https://xapi.to) 提交工单并附上 Request ID。

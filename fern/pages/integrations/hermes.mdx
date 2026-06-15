@@ -1,0 +1,111 @@
+---
+title: Hermes Agent
+subtitle: Nous Research 出品的 Hermes Agent 接入 xAPI —— 通过 hermes config 命令配置自定义 endpoint。
+---
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) 是 Nous Research 出品的
+自我进化 AI agent,支持通过 CLI 命令配置任意 OpenAI 兼容 endpoint。
+xAPI 接受 `Authorization: Bearer`,与 Hermes 默认行为完全兼容。
+
+<Warning>
+  Hermes 要求所选模型的上下文窗口**至少 64K tokens**。
+  xAPI 默认支持的 Claude / GPT-5 系列均满足这一要求。
+</Warning>
+
+<Steps>
+  <Step title="安装">
+    参考 Hermes 官方文档:
+    [hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/)。
+  </Step>
+
+  <Step title="创建 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台 → **API Keys** → 新建,
+    密钥形如 `sk-xapi-...`。
+  </Step>
+
+  <Step title="配置(选交互式或命令式)">
+    <Tabs>
+      <Tab title="交互式">
+        ```bash
+        hermes model
+        ```
+
+        在 provider 选择菜单中选 **Custom Endpoint**,按提示输入:
+
+        | 提示 | 输入 |
+        | --- | --- |
+        | Base URL | `https://ai.xapi.to/v1` |
+        | API Key | `sk-xapi-...` |
+        | Model | `claude-opus-4-7`(或其他 xAPI 支持的模型) |
+      </Tab>
+
+      <Tab title="命令式">
+        ```bash
+        hermes config set model claude-opus-4-7
+        hermes config set OPENAI_BASE_URL "https://ai.xapi.to/v1"
+        hermes config set OPENAI_API_KEY "sk-xapi-..."
+        ```
+
+        值会自动写入对应文件:
+
+        - **密钥类**(`OPENAI_API_KEY` 等):`~/.hermes/.env`
+        - **常规设置**(`model`、`OPENAI_BASE_URL` 等):`~/.hermes/config.yaml`
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="启动与验证">
+    ```bash
+    hermes --tui
+    ```
+
+    在 TUI 中确认:
+    - 顶部 model 显示 `claude-opus-4-7`
+    - 发送一句 "hi" 收到回复 = 接入成功
+
+    控制台 → Usage Records 可查看本次调用。
+  </Step>
+</Steps>
+
+## 锁定到特定上游(可选)
+
+更换 `OPENAI_BASE_URL`:
+
+| 上游 | base URL |
+| --- | --- |
+| SkyAPI(模型最全) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max(官方源) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken 逆向(成本最低) | `https://supertoken.p.xapi.to/v1` |
+
+## 切换模型
+
+```bash
+hermes config set model claude-sonnet-4-6
+```
+
+可用模型清单参见 [模型与价格](/concepts/models)。Hermes 要求 ≥64K 上下文,
+所有 xAPI 默认模型均满足。
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="模型上下文不足">
+    Hermes 强制要求模型的 `contextWindow ≥ 64000`。若提示不满足,
+    改用大上下文模型(`claude-opus-4-7`、`claude-sonnet-4-6` 等)。
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    `hermes config set OPENAI_API_KEY` 写入的密钥未生效。
+    检查 `~/.hermes/.env` 中的值。
+  </Accordion>
+
+  <Accordion title="404 Not Found">
+    `OPENAI_BASE_URL` 缺少 `/v1` 后缀。
+    正确格式:`https://ai.xapi.to/v1`。
+  </Accordion>
+
+  <Accordion title="自我进化的 skill 想保留">
+    Hermes 的 skills 持久化在本地,不上传 xAPI。
+    切换 base URL **不影响**已积累的 skill 与对话历史。
+  </Accordion>
+</AccordionGroup>

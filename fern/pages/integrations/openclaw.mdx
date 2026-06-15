@@ -1,0 +1,114 @@
+---
+title: OpenClaw
+subtitle: OpenClaw 自托管 AI 助手接入 xAPI —— 在 ~/.openclaw/openclaw.json 中注册一个自定义 provider。
+---
+
+[OpenClaw](https://github.com/openclaw/openclaw) 是开源的本地 AI 助手 CLI(跨平台),
+通过 JSON 配置注册任意 OpenAI 兼容 provider。xAPI 直接接受 `Authorization: Bearer`,
+与 OpenClaw 的 `openai-completions` provider 完全兼容。
+
+<Steps>
+  <Step title="安装">
+    参考 OpenClaw 官方安装指引:
+    [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)。
+  </Step>
+
+  <Step title="创建 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台 → **API Keys** → 新建,
+    密钥形如 `sk-xapi-...`。
+  </Step>
+
+  <Step title="配置 ~/.openclaw/openclaw.json">
+    在 `models.providers` 下注册 xAPI 作为自定义 provider:
+
+    ```json
+    {
+      "models": {
+        "mode": "merge",
+        "providers": {
+          "xapi": {
+            "baseUrl": "https://ai.xapi.to/v1",
+            "apiKey": "${XAPI_KEY}",
+            "api": "openai-completions",
+            "timeoutSeconds": 300,
+            "models": [
+              {
+                "id": "claude-opus-4-7",
+                "name": "Claude Opus 4.7 (xAPI)",
+                "contextWindow": 200000,
+                "maxTokens": 8192
+              },
+              {
+                "id": "claude-sonnet-4-6",
+                "name": "Claude Sonnet 4.6 (xAPI)",
+                "contextWindow": 200000,
+                "maxTokens": 8192
+              },
+              {
+                "id": "gpt-5.5",
+                "name": "GPT-5.5 (xAPI)",
+                "contextWindow": 128000,
+                "maxTokens": 8192
+              }
+            ]
+          }
+        }
+      },
+      "agents": {
+        "defaults": {
+          "model": {
+            "primary": "xapi/claude-opus-4-7"
+          }
+        }
+      }
+    }
+    ```
+
+    环境变量 `XAPI_KEY` 在 shell 中导出:
+
+    ```bash
+    export XAPI_KEY="sk-xapi-..."
+    ```
+
+    <Note>
+      `baseUrl` 必须**以 `/v1` 结尾**(OpenClaw 对 OpenAI 兼容端点的强制要求)。
+      `api: "openai-completions"` 走 OpenAI Chat Completions 协议,
+      与 xAPI 子域端点对齐。模型 id 直接使用 xAPI 上游的原生命名
+      (见 [模型与价格](/concepts/models))。
+    </Note>
+  </Step>
+</Steps>
+
+## 锁定到特定上游(可选)
+
+更换 `baseUrl` 即可:
+
+| 上游 | baseUrl |
+| --- | --- |
+| SkyAPI(模型最全) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max(官方源) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken 逆向(成本最低) | `https://supertoken.p.xapi.to/v1` |
+
+## 切换模型
+
+修改 `agents.defaults.model.primary` 字段,或在 `models[]` 数组中追加新条目。
+模型 id 格式为 `provider-id/model-name`,例如 `xapi/claude-sonnet-4-6`。
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="404 Not Found">
+    `baseUrl` 缺少 `/v1` 后缀。完整格式:`https://ai.xapi.to/v1`。
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    - `XAPI_KEY` 环境变量未导出,或 OpenClaw 没读到。通过 `echo $XAPI_KEY` 确认
+    - 也可以直接在 `apiKey` 字段写明文(不推荐生产使用)
+  </Accordion>
+
+  <Accordion title="模型在交互界面看不到">
+    OpenClaw 持久化 provider 配置到 agent-scoped 的
+    `~/.openclaw/agents/<agent>/agent/models.json`。
+    改完 `openclaw.json` 后,可能需要重新选择 agent 或重启 OpenClaw 让 merge 生效。
+  </Accordion>
+</AccordionGroup>

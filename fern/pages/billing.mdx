@@ -1,0 +1,126 @@
+---
+title: 计费机制
+subtitle: 按 Token 计费、预扣 → 结算两阶段、API Key 限额。
+---
+
+## 定价模型
+
+xAPI 所有 AI 端点采用 **按 Token 动态定价**(`billingType: PER_TOKEN`):
+
+```
+实际费用 = inputTokens × inputPrice
+       + outputTokens × outputPrice
+       + cacheCreationTokens × cacheCreationPrice
+       + cacheReadTokens × cacheReadPrice
+```
+
+各模型独立定价。完整价格表参见 [模型与价格](/concepts/models)。
+
+## 调用生命周期
+
+<Steps>
+  <Step title="请求到达">
+    按 `estimatedMaxTokens`(默认 4096)与模型单价计算预扣金额。
+  </Step>
+  <Step title="原子预扣">
+    Redis Lua 脚本原子性预扣。若余额不足或 API Key 限额超出 → HTTP 402,请求被拒。
+  </Step>
+  <Step title="转发上游">
+    携带平台维护的上游凭据转发请求。
+  </Step>
+  <Step title="结算">
+    上游成功响应:从 body 提取实际 token 用量 → 计算 actualCost → Lua 原子脚本差额退还或补扣。
+
+    上游失败:预扣金额全额释放。
+  </Step>
+  <Step title="持久化">
+    数据库:`User.balance` 扣减,生成 `Transaction` 流水,创建 `UsageRecord`。
+    响应头返回 `X-AI-Cost = actualCost`。
+  </Step>
+</Steps>
+
+<Tip>
+  关键设计:**预扣 → 结算两阶段** + Redis Lua 脚本原子操作,
+  既防止并发场景下的超扣,也避免上游异常时的资金占用。
+</Tip>
+
+## 阶梯定价
+
+部分 Anthropic 模型在大上下文场景下有阶梯报价:
+
+```json
+"tiers": [
+  {
+    "inputTokenThreshold": 200000,
+    "inputPricePerToken": 0.0000020,
+    "outputPricePerToken": 0.0000100
+  }
+]
+```
+
+当单次请求的 prompt context 总量
+(`inputTokens + cacheCreationTokens + cacheReadTokens`)
+达到 `inputTokenThreshold` 时,**整个请求**按高价档计费。
+
+## 缓存 Token 差异化
+
+Claude 系支持 prompt caching,xAPI 按缓存类型独立计费:
+
+- `cacheCreationInputTokens` —— 首次缓存写入,单价约为输入价 × 1.25
+- `cacheReadInputTokens` —— 缓存命中读取,单价约为输入价 × 0.10
+
+<Note>
+  OpenAI 的 `cached_tokens` 嵌套在 `prompt_tokens` 之内,
+  与 Anthropic 独立字段的语义不同。xAPI 在 token 解析阶段统一归一化,
+  保证 `inputTokens` 字段始终代表"非缓存的常规输入 token"。
+</Note>
+
+## API Key 余额限额
+
+每个 `sk-xapi-...` 密钥可独立配置 `balanceLimit`(USD 上限):
+
+| 配置 | 行为 |
+| --- | --- |
+| `balanceLimit = 50.00` | 该密钥累计扣款达到 $50 后,后续调用返回 HTTP 402 |
+| `balanceLimit = null` | 不设上限,仅受账户级余额池约束 |
+
+典型使用场景:
+
+- **团队环境**:为成员、CI、Agent 分别签发密钥并独立限额,
+  防止单个密钥异常消耗影响整体余额
+- **多项目隔离**:每个项目独立限额,便于成本归集与异常隔离
+
+`usedBalance` 字段实时记录该密钥累计已扣金额,可在控制台查询。
+
+## 充值
+
+在 [xapi.to](https://xapi.to) 控制台 → Billing 页面充值,支持:
+
+- **加密货币**:BSC 链上 USDT / USDC,通过 x402 协议自动确认到账
+- **法币**:Stripe 信用卡
+
+## 失败请求的扣费规则
+
+| 场景 | 是否扣费 |
+| --- | --- |
+| 上游返回 5xx | 否,预扣金额全额释放 |
+| 上游返回 4xx | 否,预扣金额全额释放 |
+| 网关层错误(401 / 402 / 400) | 否,未进入预扣阶段 |
+| 上游连接超时 / 网络错误 | 否,预扣金额全额释放 |
+| 客户端断开非流式请求 | 否,上游响应未收到 |
+| **客户端中断流式请求** | **是**,按累计输出长度估算扣费 |
+| 上游返回 2xx 但 body 含业务错误 | 是,按实际 token 扣费 |
+
+## 平台定价构成
+
+xAPI 对外定价 = 各上游公开价 × 平台加价倍率:
+
+| 模型档位 | 加价倍率 | 示例 |
+| --- | --- | --- |
+| Premium(旗舰) | 1.10 × | Claude Opus、GPT-4.5 |
+| Standard(主力) | 1.15 × | Claude Sonnet、GPT-4o |
+| Budget(经济) | 1.20 × | Claude Haiku、GPT-4o-mini |
+| Free(超低价) | 1.30 × | DeepSeek、Flash-Lite 系列 |
+
+旗舰模型客单价高,加价比例较低;低价模型需覆盖基础运维成本,加价比例略高。
+成本价数据来源于各上游官方 pricing 页面,**每周同步一次**。

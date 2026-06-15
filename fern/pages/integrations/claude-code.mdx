@@ -1,0 +1,114 @@
+---
+title: Claude Code
+subtitle: Anthropic 官方 CLI 接入 xAPI —— 通过环境变量切换 base URL,无需修改代码。
+---
+
+[Claude Code](https://docs.claude.com/en/docs/claude-code) 是 Anthropic 官方的命令行
+coding agent,**原生**支持通过 `ANTHROPIC_BASE_URL` 环境变量覆盖默认 base URL。
+接入 xAPI 时使用聚合路由 `ai.xapi.to`,运行于 Anthropic Messages 协议,
+自动跨上游故障转移。
+
+<Steps>
+  <Step title="安装">
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    ```
+  </Step>
+
+  <Step title="创建 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台 → **API Keys** → 新建,
+    密钥形如 `sk-xapi-...`。
+  </Step>
+
+  <Step title="配置环境变量">
+    写入 `~/.zshrc` 或 `~/.bashrc`:
+
+    ```bash
+    export ANTHROPIC_BASE_URL="https://ai.xapi.to"
+    export ANTHROPIC_AUTH_TOKEN="sk-xapi-..."
+    ```
+
+    加载新环境:
+
+    ```bash
+    source ~/.zshrc
+    ```
+
+    <Warning>
+      必须使用 `ANTHROPIC_AUTH_TOKEN`,**不要**使用 `ANTHROPIC_API_KEY`。
+      后者会触发 Claude Code 的官方账号校验逻辑导致鉴权失败。
+      若此前已设置 `ANTHROPIC_API_KEY`,请先执行 `unset ANTHROPIC_API_KEY` 并重启终端。
+    </Warning>
+  </Step>
+
+  <Step title="启动与验证">
+    ```bash
+    claude
+    ```
+
+    发送任意请求,确认收到 Claude 模型的回复即接入成功。
+    在交互式 session 中输入 `/status` 可查看当前 base URL 是否为 `ai.xapi.to`。
+  </Step>
+</Steps>
+
+## 路由策略
+
+通过修改 base URL 切换路由策略:
+
+| 优先级 | base URL |
+| --- | --- |
+| 质量(默认) | `https://ai.xapi.to` |
+| 速度 | `https://ai.xapi.to/speed` |
+| 成本 | `https://ai.xapi.to/cost` |
+
+## 模型切换
+
+session 中执行:
+
+```
+/model claude-opus-4-7
+```
+
+或在启动前设置默认模型:
+
+```bash
+export ANTHROPIC_MODEL=claude-opus-4-7
+```
+
+可用模型清单参见 [模型与价格](/concepts/models)。
+
+## 项目级隔离
+
+如需仅在特定项目中使用 xAPI,可配合 [direnv](https://direnv.net/),
+在项目根目录创建 `.envrc`:
+
+```bash
+export ANTHROPIC_BASE_URL="https://ai.xapi.to"
+export ANTHROPIC_AUTH_TOKEN="sk-xapi-..."
+```
+
+执行 `direnv allow` 后,该目录下的 `claude` 命令将使用 xAPI,
+其他位置仍走原配置。
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="401 authentication_error">
+    - 通过 `echo $ANTHROPIC_AUTH_TOKEN` 确认密钥已正确加载
+    - 执行 `unset ANTHROPIC_API_KEY` 并重启终端
+  </Accordion>
+
+  <Accordion title="仍走官方 endpoint">
+    - 终端未加载新环境变量:重开 terminal 或 `source ~/.zshrc`
+    - 在 session 中输入 `/status` 查看当前 base URL
+  </Accordion>
+
+  <Accordion title='Model "xxx" is not configured for this endpoint'>
+    当前模型不在所命中上游的支持列表中。执行 `/model claude-opus-4-7`
+    切换至 [支持的模型](/concepts/models),或使用 `/cost` 策略让网关进行跨上游模糊匹配。
+  </Accordion>
+
+  <Accordion title="count_tokens 返回 404">
+    该端点暂未实现。Claude Code 会自动降级为本地 tokenizer 估算,不影响主流程。
+  </Accordion>
+</AccordionGroup>

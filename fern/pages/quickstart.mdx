@@ -1,0 +1,126 @@
+---
+title: 快速开始
+subtitle: 通过 curl 完成首次调用 —— ai.xapi.to 同时支持 Anthropic 与 OpenAI 协议。
+---
+
+xAPI 的统一接入点是 `https://ai.xapi.to`,**同时支持** Anthropic Messages 与
+OpenAI Chat Completions 两种协议 —— 根据客户端选择对应的 endpoint 路径即可。
+
+所有端点接受两种鉴权头,任选其一:
+
+```http
+x-api-key: sk-xapi-...            # Anthropic SDK 默认
+Authorization: Bearer sk-xapi-... # OpenAI SDK 默认
+```
+
+<Steps>
+  <Step title="创建 API Key">
+    进入 [xapi.to](https://xapi.to) 控制台,在 **API Keys** 页面创建密钥。
+
+    <Warning>
+      密钥仅在创建时显示一次,请妥善保管 —— 丢失后无法找回,
+      只能撤销并重新生成。
+    </Warning>
+  </Step>
+
+  <Step title="调用 Claude(Anthropic 协议)">
+    ```bash
+    curl https://ai.xapi.to/v1/messages \
+      -H "x-api-key: sk-xapi-..." \
+      -H "anthropic-version: 2023-06-01" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "claude-opus-4-7",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}]
+      }'
+    ```
+
+    <Tip>
+      `x-api-key` 是 [Anthropic 官方 API](https://platform.claude.com/docs/en/build-with-claude/working-with-messages)
+      的标准鉴权头,Claude Code 等官方 SDK 默认即可使用。
+    </Tip>
+  </Step>
+
+  <Step title="调用 GPT-5.5(OpenAI 协议)">
+    ```bash
+    curl https://ai.xapi.to/v1/chat/completions \
+      -H "Authorization: Bearer sk-xapi-..." \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "gpt-5.5",
+        "messages": [{"role": "user", "content": "Hello"}]
+      }'
+    ```
+
+    <Tip>
+      OpenAI SDK 默认使用 `Authorization: Bearer` 鉴权 —— 把 `OPENAI_BASE_URL`
+      指向 `https://ai.xapi.to/v1`、`OPENAI_API_KEY` 填 `sk-xapi-...`
+      即可直接使用,无需任何额外配置。
+    </Tip>
+  </Step>
+
+  <Step title="路由策略">
+    通过 URL 路径前缀切换路由优先级,**不改变请求体或响应体**:
+
+    | 路径前缀 | 策略 |
+    | --- | --- |
+    | `ai.xapi.to/v1/...`(默认) | quality — 官方源与高 SLA 上游优先 |
+    | `ai.xapi.to/speed/v1/...` | speed — 当前延迟最低 |
+    | `ai.xapi.to/cost/v1/...` | cost — 当前价格最低 |
+
+    例:
+
+    ```bash
+    curl https://ai.xapi.to/cost/v1/messages \
+      -H "x-api-key: sk-xapi-..." \
+      -H "anthropic-version: 2023-06-01" \
+      -d '{ "model": "claude-opus-4-7", ... }'
+    ```
+  </Step>
+
+  <Step title="流式响应">
+    在请求体中设置 `"stream": true`:
+
+    ```bash
+    curl https://ai.xapi.to/v1/messages \
+      -H "x-api-key: sk-xapi-..." \
+      -H "anthropic-version: 2023-06-01" \
+      -H "Content-Type: application/json" \
+      -N \
+      -d '{"model":"claude-opus-4-7","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"讲个笑话"}]}'
+    ```
+
+    <Note>
+      流式响应**不会**在 response headers 中返回最终的 `X-AI-Cost` ——
+      响应头在流式传输开始时即已发送至客户端。
+      如需查询费用,请通过控制台 → Usage Records 获取。
+    </Note>
+  </Step>
+</Steps>
+
+## 响应头说明
+
+| Header | 含义 |
+| --- | --- |
+| `X-AI-Cost` | 本次扣款金额(USD,8 位小数,仅非流式成功响应返回) |
+| `X-AI-Tokens-Input` / `Output` / `Total` | Token 用量统计 |
+| `X-Routing-Provider` | 实际命中的上游标识 |
+| `X-Routing-Attempts` | 尝试次数(>1 表示发生过自动故障转移) |
+| `X-Routing-Fallback` | 是否走了 fallback 上游 |
+| `X-XAPI-Source` | `provider`(上游响应)或 `platform`(网关层错误) |
+| `X-XAPI-Request-Id` | 平台请求 ID,排障时附在工单中 |
+
+## 后续步骤
+
+<CardGroup cols={3}>
+  <Card title="IDE / CLI 集成" href="/integrations/claude-code" icon="terminal">
+    Claude Code · Codex · Cursor 等
+  </Card>
+  <Card title="模型清单" href="/concepts/models" icon="coins">
+    跨上游价格对比
+  </Card>
+  <Card title="API 参考" href="/reference/api" icon="code">
+    完整端点与字段说明
+  </Card>
+</CardGroup>

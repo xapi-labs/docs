@@ -1,0 +1,276 @@
+---
+title: OpenAI Agents + xAPI Sandbox
+subtitle: 用 ai.xapi.to 的 DeepSeek 负责规划，用 xAPI Sandbox 负责真实、隔离、可审计的工具执行。
+---
+
+OpenAI Agents SDK 的 `SandboxAgent` 把“模型推理”和“Sandbox 计算”分成两个独立接口：
+
+```text
+                         ┌─ OpenAI-compatible model provider
+User task ─► Runner ─────┤  ai.xapi.to/v1 → deepseek-v4-pro
+                         │
+                         └─ SandboxClient
+                            sandbox.xapi.to → Daytona / E2B / ...
+```
+
+因此可以使用 OpenAI 的 Agent 编排和 Shell capability，同时让 DeepSeek 通过
+`ai.xapi.to` 生成工具调用，让 xAPI Sandbox 在隔离实例中真正执行命令。模型不会获得
+xAPI Key 或底层供应商凭证。
+
+## 安装
+
+```bash
+npm install @openai/agents xapi-to zod
+```
+
+示例使用两个包入口：
+
+- `@openai/agents` 与 `@openai/agents/sandbox`：Runner、SandboxAgent、Manifest、Shell；
+- `xapi-to/openai-sandbox`：把 OpenAI `SandboxClient` 协议映射到 xAPI Sandbox Gateway。
+
+<Note>
+  `xapi-to/openai-sandbox` 随包含该适配器的 xapi-to 版本发布。若在 CLI 仓库中本地开发，
+  先执行 `npm run build`，并确保应用解析到当前 workspace 包。
+</Note>
+
+## 新版 CLI 尚未发布时本地测试
+
+当前 workspace 提供可直接执行的源码示例，不需要等待 npm 发布，也不需要把本地包全局安装：
+
+```bash
+cd /path/to/xapi-cli
+npm install
+export XAPI_SANDBOX_KEY='sk-sandbox-test-...'
+export XAPI_AI_KEY='sk-ai-production-...'
+npm run example:sandbox:openai
+```
+
+示例文件是 `examples/openai-agents-sandbox-local.ts`。与下面正式发布后的代码相比，
+唯一关键区别是适配器使用本地源码导入：
+
+```ts
+import { XapiAgentsSandboxClient } from '../src/openai-sandbox-client.ts';
+```
+
+默认配置如下；均可通过环境变量覆盖：
+
+| 配置 | 默认值 | 环境变量 |
+| --- | --- | --- |
+| 模型 Gateway | `https://ai.xapi.to/v1` | 固定为当前 OpenAI-compatible 入口 |
+| 模型凭据 | 无 | `XAPI_AI_KEY` |
+| 模型 | `deepseek-v4-pro` | `XAPI_MODEL` |
+| Sandbox Gateway | `sandbox.test.xapi.to` | `XAPI_SANDBOX_HOST` |
+| Sandbox 凭据 | 无 | `XAPI_SANDBOX_KEY` |
+| Sandbox 供应商 | `daytona` | `XAPI_SANDBOX_PROVIDER` |
+| 价格上限 | `$0.20/小时` | `XAPI_SANDBOX_MAX_HOURLY_USD` |
+
+```bash
+XAPI_SANDBOX_HOST=sandbox.test.xapi.to \
+XAPI_SANDBOX_PROVIDER=daytona \
+XAPI_MODEL=deepseek-v4-pro \
+npm run example:sandbox:openai
+```
+
+这个混合环境可能需要两把 Key：`XAPI_SANDBOX_KEY` 只访问 Sandbox Gateway，
+`XAPI_AI_KEY` 只访问正式 `ai.xapi.to`。如果同一把正式 xAPI Key 对两个 Gateway 都有效，
+可以让二者都回退到 `XAPI_KEY` → `XAPI_API_KEY` → CLI 配置文件。命令不会接受
+`--api-key`，也不会把密钥写入 prompt、Sandbox、报告或命令行参数。成功报告应包含：
+
+- `finalOutput` 含 `SDK_OK=42`；
+- `sandbox.execCount >= 2`；
+- `sandbox.finalState` 为 `TERMINATED`；
+- `sandbox.auditCounts` 含 operations、events、usageSegments、billingPeriods；
+- `sandbox.totalCost` 为服务端最终结算值。
+
+## 配置密钥
+
+推荐按用途通过进程环境注入，不要写入源码：
+
+```bash
+export XAPI_SANDBOX_KEY='sk-sandbox-...'
+export XAPI_AI_KEY='sk-ai-...'
+```
+
+两把 Key 只发送给各自负责的 xAPI 主机：
+
+| 环境变量 | 目的 | 主机 | 协议 |
+| --- | --- | --- | --- |
+| `XAPI_AI_KEY` | 模型推理 | `https://ai.xapi.to/v1` | OpenAI Chat Completions compatible |
+| `XAPI_SANDBOX_KEY` | Sandbox 计算 | `https://sandbox.xapi.to` 或 `https://sandbox.test.xapi.to` | xAPI Sandbox Consumer API |
+
+<Note>
+  正式环境中，如果一把 xAPI Key 同时拥有 AI 与 Sandbox 权限，可以把同一个值注入两个
+  环境变量。测试 Sandbox Key 不应假定可以调用正式 AI Gateway；这正是两项配置分开的原因。
+</Note>
+
+## 完整示例：DeepSeek + Shell
+
+```ts
+import { OpenAIProvider, Runner } from '@openai/agents';
+import { Manifest, SandboxAgent, shell } from '@openai/agents/sandbox';
+import { XapiAgentsSandboxClient } from 'xapi-to/openai-sandbox';
+
+const sandboxApiKey = process.env.XAPI_SANDBOX_KEY;
+const aiApiKey = process.env.XAPI_AI_KEY;
+if (!sandboxApiKey) throw new Error('XAPI_SANDBOX_KEY is required');
+if (!aiApiKey) throw new Error('XAPI_AI_KEY is required');
+
+// 计算层：xAPI 负责报价、创建、执行、审计、计费和销毁。
+const sandbox = new XapiAgentsSandboxClient({
+  apiKey: sandboxApiKey,
+  sandboxHost: 'sandbox.xapi.to',
+  provider: 'daytona',       // 也可省略并使用适配器默认值
+  maxHourlyUsd: 0.20,
+  model: 'deepseek-v4-pro',  // 写入实例 metadata，便于日志关联
+});
+
+// 模型层：ai.xapi.to 对外提供 OpenAI Chat Completions 兼容协议。
+const modelProvider = new OpenAIProvider({
+  apiKey: aiApiKey,
+  baseURL: 'https://ai.xapi.to/v1',
+  useResponses: false,
+  strictFeatureValidation: true,
+});
+
+// xAPI Key 不是 OpenAI telemetry credential，避免 SDK 把 tracing 发往 OpenAI。
+const runner = new Runner({
+  modelProvider,
+  tracingDisabled: true,
+});
+
+const agent = new SandboxAgent({
+  name: 'xAPI DeepSeek sandbox agent',
+  model: 'deepseek-v4-pro',
+  defaultManifest: new Manifest({ root: sandbox.workspaceRoot }),
+  capabilities: [shell()],
+  instructions: [
+    'Work only inside the sandbox workspace.',
+    'Use shell to complete the task.',
+    'Verify the artifact before reporting success.',
+  ].join(' '),
+});
+
+try {
+  const result = await runner.run(
+    agent,
+    'Write SDK_OK=42 to result.txt, then read the file and verify it.',
+    {
+      maxTurns: 8,
+      sandbox: { client: sandbox },
+    },
+  );
+
+  console.log(result.finalOutput);
+} finally {
+  // close() 会终止实例、等待终态并读取审计计数与最终费用。
+  await sandbox.lastSession?.close();
+}
+```
+
+## 为什么必须使用 `useResponses: false`
+
+`OpenAIProvider` 可以驱动 OpenAI 模型，也可以驱动 Chat Completions 兼容模型。
+`ai.xapi.to/v1/chat/completions` 当前实现的是 OpenAI Chat Completions 协议，因此配置：
+
+```ts
+new OpenAIProvider({
+  baseURL: 'https://ai.xapi.to/v1',
+  useResponses: false,
+});
+```
+
+如果保留 Responses 默认路径，SDK 会尝试调用当前未用于该链路的 Responses API，导致协议或
+能力不匹配。`strictFeatureValidation: true` 可让不支持的功能尽早报错，而不是静默降级。
+
+## 为什么关闭 tracing
+
+模型请求和 OpenAI SDK tracing 是两个不同目标：
+
+- `aiApiKey` 只对 `ai.xapi.to` 使用；
+- `sandboxApiKey` 只对 Sandbox Gateway 使用；
+- 它不是 OpenAI 平台的 tracing credential；
+- 未显式配置独立 OpenAI telemetry key 时，应设置 `tracingDisabled: true`。
+
+不要为了让 tracing “不报错”而把 xAPI Key 发送到其他域名。如果需要可观测性，使用
+xAPI Console 的 AI Logs 与 Sandbox operations/events/usage/billing 日志。
+
+## Agent 实际经历了什么
+
+一次完整运行通常包含：
+
+1. Runner 把任务交给 `deepseek-v4-pro`；
+2. DeepSeek 返回 Shell tool call；
+3. `XapiAgentsSandboxClient` 按 `exec/files` 能力报价并创建实例；
+4. 适配器等待实例进入 `RUNNING` 并准备工作目录；
+5. SDK 把 Shell 命令发送给真实 Sandbox，得到 `exitCode/stdout/stderr`；
+6. 工具结果返回模型，模型可继续执行下一步或给出最终答案；
+7. `finally` 终止实例，并读取 operations、events、usageSegments 与 billingPeriods。
+
+同一任务会产生两组日志：模型调用在 **Console → AI Logs**，工具执行和实例生命周期在
+**Console → Sandboxes → 调用日志**。
+
+## 当前适配器的能力边界
+
+目前经过真实验证的是：
+
+- 空 `Manifest`；
+- SDK `shell()` capability；
+- 报价、创建、等待、命令执行、终止；
+- 操作、状态、用量和账单审计；
+- Daytona 工作目录映射。
+
+以下能力尚未由该适配器实现：
+
+- 把 Manifest 文件条目自动物化到实例；
+- Manifest mounts、snapshot 和环境变量映射；
+- OpenAI SDK 中其他可选 Sandbox capability 的完整翻译；
+- 任意供应商工作目录语义的自动探测。
+
+适配器会明确拒绝未实现的 Manifest 条目或环境变量，不会假装这些能力已经生效。
+应用仍可通过 xAPI CLI/Consumer API 在实例创建后执行文件和端口操作。
+
+## 使用测试 Sandbox
+
+只测试 Sandbox 计算层时，将主机改为：
+
+```ts
+const sandbox = new XapiAgentsSandboxClient({
+  apiKey: sandboxApiKey,
+  sandboxHost: 'sandbox.test.xapi.to',
+  provider: 'daytona',
+  model: 'deepseek-v4-pro',
+});
+```
+
+<Warning>
+  这会形成**混合环境**：Sandbox 在测试环境，模型仍在 `ai.xapi.to` 正式 AI 网关。
+  目前没有 `ai.test.xapi.to` / `test.xapi.ai`。所以模型调用出现在正式 Console 的
+  AI Logs，而 Sandbox 调用出现在 `test.xapi.to` Console 的 Sandboxes 日志。
+  测试 Sandbox Key 和正式 AI Key 通常不是同一把；不要把这种运行称为“全链路 test-only”。
+</Warning>
+
+完整环境矩阵、验收命令和日志定位方法见[测试环境与日志](/sandbox/testing)。
+
+## 本地开发验收
+
+在包含适配器源码的 `xapi-cli` 仓库中：
+
+```bash
+npm run typecheck
+npm run build
+
+XAPI_SANDBOX_KEY='sk-sandbox-test-...' \
+XAPI_AI_KEY='sk-ai-production-...' \
+npm run test:sandbox:openai -- \
+  --host sandbox.test.xapi.to \
+  --provider daytona \
+  --model deepseek-v4-pro
+```
+
+脚本会先探测 DeepSeek，然后让真实 `SandboxAgent` 完成写入和读取任务，最后输出脱敏 JSON
+报告并检查活动实例数量。报告中不写入 API Key。
+
+<Tip>
+  验收不能只检查 Agent 最终回答。至少还要验证 Shell marker、命令次数、实例终态、
+  四类审计计数和 `activeInstances = 0`。
+</Tip>

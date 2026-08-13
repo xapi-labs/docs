@@ -1,0 +1,314 @@
+---
+title: Sandbox CLI 使用指南
+subtitle: 使用 xapi-to 完成报价、创建、执行、文件、端口、生命周期、历史与审计。
+---
+
+`xapi-to sandbox` 为 Agent 和自动化脚本提供机器可读的 Sandbox 生命周期命令。
+普通输出默认为 JSON，可使用 `--format pretty` 或 `--format table` 提高可读性。
+
+## 安装与密钥
+
+```bash
+# 无需全局安装
+npx xapi-to sandbox --help
+
+# 或安装为全局命令
+npm install -g xapi-to
+```
+
+推荐从标准输入保存已有密钥，避免出现在 shell history：
+
+```bash
+npx xapi-to config set apiKey=-
+# 粘贴密钥后按 Ctrl-D
+
+npx xapi-to config show   # 只显示脱敏后的 Key
+npx xapi-to config health
+```
+
+CLI 按以下顺序读取密钥：`XAPI_KEY` → `XAPI_API_KEY` → `~/.xapi/config.json`。
+
+## 选择环境
+
+生产 Sandbox Gateway 默认为 `sandbox.xapi.to`。测试 Sandbox 使用：
+
+```bash
+export XAPI_SANDBOX_HOST=sandbox.test.xapi.to
+```
+
+也可为单条命令传入：
+
+```bash
+npx xapi-to sandbox offerings \
+  --host sandbox.test.xapi.to \
+  --format table
+```
+
+<Warning>
+  `test.xapi.to` 是测试站 Console，Sandbox API 的实际主机是
+  `sandbox.test.xapi.to`。目前没有 `test.xapi.ai` 或 `ai.test.xapi.to` AI 网关；
+  详见[测试环境与日志](/sandbox/testing)。
+</Warning>
+
+## 一键执行（推荐）
+
+`sandbox run` 会依次执行：
+
+```text
+quote → create → wait RUNNING → exec → terminate → wait TERMINATED → read cost
+```
+
+```bash
+npx xapi-to sandbox run \
+  --command 'python3 -c "print(6 * 7)"' \
+  --max-hourly-usd 0.20 \
+  --format pretty
+```
+
+也可把裸 `--` 后的内容作为命令：
+
+```bash
+npx xapi-to sandbox run -- node --version
+```
+
+重点检查输出字段：
+
+- `result.exitCode / stdout / stderr`：远程执行结果；
+- `cleanup.operationStatus / state`：清理操作和服务端终态；
+- `finalState`：应为 `TERMINATED`，或供应商终态 `FAILED`；
+- `totalCost`：服务端结算费用，不是客户端按墙钟时间估算的数字。
+
+远程命令非零退出后，CLI 会先清理实例，再把非零状态映射为本地进程退出码。
+`SIGINT` 和 `SIGTERM` 也会触发清理。
+
+<Warning>
+  `--keep` 会跳过自动销毁，实例继续计费。只有明确需要保留工作区时才使用，并记录
+  实例 ID 和后续清理责任人。
+</Warning>
+
+## JavaScript 全流程演示
+
+CLI 源码仓库提供一个不依赖预先实例 ID 的独立演示脚本。它按顺序展示直接 HTTP API、
+本地新版 CLI，以及 OpenAI Agents SDK + `ai.xapi.to` DeepSeek + xAPI Sandbox：
+
+```bash
+cd xapi-cli
+bun install --frozen-lockfile
+
+# 测试 Sandbox Key；仅发送给 sandbox.test.xapi.to
+read -s XAPI_SANDBOX_KEY && export XAPI_SANDBOX_KEY
+
+# OpenAI/DeepSeek 场景还需要正式 ai.xapi.to Key
+read -s XAPI_AI_KEY && export XAPI_AI_KEY
+
+# 运行三套流程
+npm run demo:sandbox
+
+# 也可只运行其中一套
+npm run demo:sandbox -- api
+npm run demo:sandbox -- cli
+npm run demo:sandbox -- openai
+
+unset XAPI_SANDBOX_KEY XAPI_AI_KEY
+```
+
+默认目标为测试 Sandbox。直接 API 和 CLI 场景使用 `XAPI_SANDBOX_KEY`；OpenAI 场景的
+计算层仍使用该 Key，但模型层改用 `XAPI_AI_KEY` 调用正式 `ai.xapi.to`。最终报告分别显示
+两项凭据的脱敏 preview 和来源。每套流程自行报价、创建、验证并终止实例；最终 JSON
+验证 marker、`TERMINATED`、操作成功、用量/账单结清、服务端费用和账户活动实例为零。
+
+## 先看目录，再报价
+
+```bash
+# 实时查看资源、能力、生命周期和价格
+npx xapi-to sandbox offerings --format table
+
+# 按能力和预算报价；不会创建实例
+npx xapi-to sandbox quote \
+  --capabilities exec,files \
+  --cpu 2 \
+  --memory 4 \
+  --max-hourly-usd 0.20 \
+  --format pretty
+```
+
+`--format table` 适合快速比较规格；被截断的单元格会以 `…` 结尾。复制完整的
+`quoteId`、实例 ID 或嵌套费率信息时，请使用默认 JSON 或 `--format pretty`。
+
+常用选型参数：
+
+| 参数 | 含义 |
+| --- | --- |
+| `--provider auto\|daytona\|cf-edge\|e2b\|runpod\|runloop\|modal\|vc-sandbox` | 自动选型或固定供应商 |
+| `--capabilities exec,files,ports` | 所需标准能力 |
+| `--cpu / --memory / --volume` | 最低 CPU、内存 GiB、卷 GiB |
+| `--gpu-count / --gpu-model` | GPU 数量与型号 |
+| `--regions a,b` | 允许区域 |
+| `--requirements '<json>'` | 完整 requirements 对象 |
+| `--max-hourly-usd` | 创建前硬性小时价格上限 |
+
+每个子命令都有独立帮助，例如 `xapi-to sandbox create --help` 和
+`xapi-to sandbox run --help`。CLI 会在发起请求前拒绝未知参数，避免参数拼写错误被静默忽略。
+
+<Warning>
+  `--offering-id` 是精确规格选择，不能与 `--max-hourly-usd` 同时使用。需要价格保护时，
+  请使用 requirements 参数触发受上限约束的报价，或者使用已经核对过价格的 `quoteId`。
+</Warning>
+
+固定供应商会派生受控主机，例如 `daytona.sandbox.test.xapi.to`。CLI 只会向
+`*.xapi.to` 或显式 localhost 发送 Sandbox 密钥，不接受任意供应商 URL。
+
+## 多步骤生命周期
+
+当 Agent 需要在多次文件和命令调用之间保留状态时，使用细粒度命令：
+
+```bash
+set -euo pipefail
+
+box_json="$(npx xapi-to sandbox create \
+  --capabilities exec,files \
+  --max-hourly-usd 0.20 \
+  --idempotency-key "ci-${CI_JOB_ID:-manual}" \
+  --wait)"
+box_id="$(printf '%s' "$box_json" | jq -r '.id')"
+
+cleanup() {
+  npx xapi-to sandbox terminate "$box_id" --wait-timeout 5m || true
+}
+trap cleanup EXIT INT TERM
+
+npx xapi-to sandbox file write "$box_id" TASK.md --file ./TASK.md
+npx xapi-to sandbox exec "$box_id" \
+  --command 'npm ci && npm test' \
+  --timeout 600
+npx xapi-to sandbox file read "$box_id" report.json --output ./report.json
+```
+
+`--idempotency-key` 应来自稳定的业务任务 ID。响应丢失后不要随意生成新 key 重试创建；
+第一次请求可能已经生成计费实例，应先查历史确认。
+
+创建成功时，CLI 会返回 `clientIdempotencyKey`。如果实例已经创建，但 `--wait` 等待失败，
+结构化错误会包含 `instanceId`、`observedState`、`clientIdempotencyKey`，以及对应的
+`get`/`terminate` 恢复命令，避免实例失联后继续计费。
+
+## 命令与工作目录
+
+```bash
+npx xapi-to sandbox exec <id> \
+  --command 'pytest -q' \
+  --cwd /workspace/project \
+  --timeout 300
+
+# 位置参数简写
+npx xapi-to sandbox exec <id> -- npm test
+```
+
+返回 `exitCode`、`stdout`、`stderr` 和耗时。不要只搜索 stdout 中的文本来判断成功；
+同时检查退出码，并在必要时读取生成的产物。
+
+## 文件与产物
+
+```bash
+# 写入文本或本地文件
+npx xapi-to sandbox file write <id> instructions.txt --content 'Run tests.'
+npx xapi-to sandbox file write <id> input.zip --file ./input.zip
+
+# 列出和读取
+npx xapi-to sandbox file list <id> --path . --depth 3
+npx xapi-to sandbox file read <id> report.json
+npx xapi-to sandbox file read <id> output.zip --output ./output.zip
+```
+
+CLI 会以 base64 传输本地二进制文件；`--output` 使用“只创建新文件”语义，拒绝覆盖
+已有本地路径。
+
+## Web 预览与端口
+
+实例内服务监听 `0.0.0.0` 后，可取得临时公网地址：
+
+```bash
+npx xapi-to sandbox exec <id> --command \
+  'nohup python3 -m http.server 25319 >/tmp/server.log 2>&1 &'
+
+npx xapi-to sandbox port <id> 25319
+```
+
+取得 URL 后应从外部请求并验证预期 marker。返回 URL 不等于 DNS、TLS 和应用已经就绪；
+使用有上限的重试，失败后仍要销毁实例。销毁后临时 URL 会失效。
+
+## 挂起与恢复
+
+先检查 Offering 的 `lifecycle.suspension` 声明：
+
+```bash
+npx xapi-to sandbox offerings --format pretty
+npx xapi-to sandbox suspend <id>
+npx xapi-to sandbox get <id>
+npx xapi-to sandbox resume <id>
+```
+
+文件系统、内存和进程是否保留由 Offering 分别声明。不要因为供应商支持“暂停”就假设
+所有运行时状态都还在。挂起可能降低计算费，但仍需以实时账单为准。
+
+## GPU 与供应商扩展
+
+管理型 GPU Offering 可能不暴露标准 Shell，而是通过扩展返回连接信息：
+
+```bash
+npx xapi-to sandbox quote \
+  --gpu-count 1 \
+  --max-hourly-usd 2.00
+
+npx xapi-to sandbox create \
+  --provider runpod \
+  --gpu-count 1 \
+  --max-hourly-usd 2.00 \
+  --wait
+
+npx xapi-to sandbox extension <id> runpod.connection_info --input '{}'
+npx xapi-to sandbox terminate <id> --provider runpod
+```
+
+扩展 ID 必须来自 Offering 的 `capabilities.extensionIds`，不要猜测未声明的扩展。
+
+## 历史、日志与账单
+
+```bash
+# 当前实例详情
+npx xapi-to sandbox get <id> --format pretty
+
+# 四类完整审计流
+npx xapi-to sandbox audit <id> --kind operations
+npx xapi-to sandbox audit <id> --kind events
+npx xapi-to sandbox audit <id> --kind usageSegments
+npx xapi-to sandbox audit <id> --kind billingPeriods
+
+# 分页历史，可按状态、时间和文本筛选
+npx xapi-to sandbox history \
+  --state HISTORY \
+  --search <instance-id-or-provider> \
+  --page 1 \
+  --page-size 100
+```
+
+Console 中的统一入口是 **Console → Sandboxes**：
+
+- **监控**：并发、创建速率和消费；
+- **实例列表**：当前与历史实例；
+- **调用日志**：跨实例的 CREATE、EXEC、FILE、PORT 和状态操作。
+
+测试环境入口和日志分流规则参见[测试环境与日志](/sandbox/testing)。
+
+## 中断后的恢复
+
+`SIGKILL`、机器断电或网络分区无法执行本地 `finally`。恢复连接后：
+
+```bash
+npx xapi-to sandbox list --format table
+npx xapi-to sandbox history --state ACTIVE --page-size 100
+npx xapi-to sandbox get <suspected-id>
+npx xapi-to sandbox terminate <suspected-id> --wait-timeout 5m
+```
+
+若 terminate 返回状态冲突，说明另一个状态操作仍在进行；先读取服务端状态，再在转换结束后
+重试。最终以 `observedState` 和账单终态为准。

@@ -1,0 +1,219 @@
+---
+title: 测试环境与 Console 日志
+subtitle: 准确区分 test.xapi.to、sandbox.test.xapi.to 与 ai.xapi.to，并用服务端证据验收真实调用。
+---
+
+Sandbox 测试必须同时回答三个问题：请求打到哪个环境、使用哪个账户、日志应该在哪个
+Console 查看。只看到页面成功或命令 stdout，不足以证明实例已经清理和账单已经结算。
+
+## 环境矩阵
+
+| 功能 | 测试环境 | 正式环境 | 说明 |
+| --- | --- | --- | --- |
+| Web / Console | `https://test.xapi.to` | `https://www.xapi.to` | 测试站可能受访问保护 |
+| Sandbox Gateway | `https://sandbox.test.xapi.to` | `https://sandbox.xapi.to` | CLI `--host` 指向这里 |
+| 固定供应商 Sandbox | `{provider}.sandbox.test.xapi.to` | `{provider}.sandbox.xapi.to` | 由 CLI/Gateway 安全派生 |
+| AI Gateway | **当前没有测试域名** | `https://ai.xapi.to` | DeepSeek 等模型请求走正式 AI 网关 |
+
+<Warning>
+  `test.xapi.ai` 不是 xAPI 测试域名，`ai.test.xapi.to` 当前也未提供服务。正确的测试站是
+  `test.xapi.to`，正确的测试 Sandbox API 是 `sandbox.test.xapi.to`。
+</Warning>
+
+## 测试类型必须明确标注
+
+### Sandbox-only test
+
+```bash
+XAPI_SANDBOX_HOST=sandbox.test.xapi.to \
+  npx xapi-to sandbox run --command 'echo SANDBOX_TEST_OK'
+```
+
+所有计算、生命周期、Sandbox 审计和 Sandbox 计费都在测试环境。此测试不调用模型。
+
+### OpenAI Agents mixed-environment test
+
+```text
+OpenAI SandboxAgent
+  ├─ model: ai.xapi.to → DeepSeek                 (正式 AI 环境)
+  └─ compute: sandbox.test.xapi.to → Daytona     (测试 Sandbox 环境)
+```
+
+这是当前 OpenAI Sandbox Agents SDK E2E 的实际边界。它可以证明 DeepSeek tool calling 与
+测试 Sandbox adapter 能协同运行，但不能证明“测试 AI Gateway + 测试 Sandbox”的完全
+隔离链路，因为测试 AI Gateway 尚不存在。
+
+## 使用哪个账户
+
+普通 CLI Sandbox 命令的有效密钥优先级为：
+
+```text
+XAPI_KEY → XAPI_API_KEY → ~/.xapi/config.json
+```
+
+在验收前运行：
+
+```bash
+npx xapi-to config show
+npx xapi-to balance
+```
+
+`config show` 只显示脱敏 Key 和来源。若环境变量覆盖了配置文件，CLI 会使用环境变量对应
+账户。不要从“自己刚粘贴过哪把 Key”推断实际账户；以 `config show` 和 Console 中的
+Key 名称/尾号为准。
+
+OpenAI SandboxAgent 混合环境应显式区分两项凭据：
+
+| 环境变量 | 发送目标 | 典型账户 |
+| --- | --- | --- |
+| `XAPI_SANDBOX_KEY` | `sandbox.test.xapi.to` | Sandbox 测试账户 |
+| `XAPI_AI_KEY` | `ai.xapi.to` | 正式 AI Gateway 账户 |
+
+不要用 Sandbox 测试 Key 能创建实例这一事实，推断它也有正式 AI Gateway 权限。验收报告
+应分别记录两把 Key 的脱敏 preview 和来源，并确保完整 Key 不进入报告、prompt 或 Sandbox。
+
+<Tip>
+  每个验收报告都应记录脱敏 Key preview、账户环境、Sandbox host、模型 gateway、模型、
+  Provider 和运行时间，但绝不能记录完整 Key。
+</Tip>
+
+## Console 中查看日志
+
+### 测试 Sandbox 日志
+
+打开 [test.xapi.to Console → Sandboxes](https://test.xapi.to/console?tab=sandbox)：
+
+1. **监控**：确认并发实例和消费趋势；
+2. **实例列表**：按实例 ID、Provider 和时间定位资源；
+3. **调用日志**：查看 CREATE、EXEC、FILE、PORT、SUSPEND、RESUME、TERMINATE；
+4. 展开实例详情，核对 operations、events、usage segments 和 settlement ledger。
+
+时间显示可能使用浏览器本地时区，而 JSON 报告通常使用 UTC ISO 时间。比对时同时使用
+实例 ID 和操作顺序，不要只靠肉眼匹配小时数。
+
+### DeepSeek 模型日志
+
+使用 `ai.xapi.to` 的调用在
+[正式 Console → AI Logs](https://www.xapi.to/console?tab=aiLogs) 查看。可按：
+
+- API Key 名称；
+- Provider = `DeepSeek`；
+- Model = `deepseek-v4-pro`；
+- 时间范围和状态码；
+
+进行筛选。一次 Agent 任务通常产生多次模型调用：初始规划、每次工具结果回传后的下一轮
+推理，以及最终回答。因此“一个用户任务”不一定对应“一条 AI Log”。
+
+## 单场景验收清单
+
+每个会创建实例的场景至少验证：
+
+1. Quote 返回 Offering、价格和有效期，且不超过测试设定的上限；
+2. Create 返回实例 ID，并最终进入 `RUNNING`；
+3. 真实能力被执行，例如命令退出码、文件内容或公网 URL marker；
+4. 操作日志记录输入摘要、状态、耗时和输出预览；
+5. 状态事件至少覆盖 `PROVISIONING → RUNNING → TERMINATED`；
+6. usageSegments 全部关闭，没有 `endsAt = null` 的遗留段；
+7. billingPeriods 全部进入终态，`totalCost` 与结算汇总一致；
+8. terminate 请求之后继续等待服务端 `TERMINATED`；
+9. 最终 `history --state ACTIVE` 不包含本次实例；
+10. 报告中没有 API Key、供应商密钥或其他凭证。
+
+## Playground/CLI 多场景验收
+
+`xapi-cli` 仓库提供真实多场景脚本：
+
+```bash
+cd xapi-cli
+npm run build
+
+npm run test:sandbox:playground -- \
+  --host sandbox.test.xapi.to
+```
+
+场景覆盖：
+
+- 目录、能力与预算报价；
+- 一次性代码执行；
+- AI 编码任务；
+- CI 复现与修复；
+- 数据上传、分析与报告取回；
+- 多 Agent 独立实例；
+- Cloudflare Web 预览与外部 URL 验证；
+- 挂起、恢复与文件保留；
+- GPU Offering 与连接信息；
+- 操作、事件、用量、账单、历史和最终零活动实例检查。
+
+聚焦重跑或跳过高成本 GPU：
+
+```bash
+npm run test:sandbox:playground -- \
+  --host sandbox.test.xapi.to \
+  --only 8,9
+
+npm run test:sandbox:playground -- \
+  --host sandbox.test.xapi.to \
+  --skip-gpu
+```
+
+<Note>
+  GPU 容量不足、供应商配额或 HTTP 402 是外部前置条件失败，不等于场景通过。应保留本次
+  失败证据和最近一次真实成功报告，不能用页面结构测试或 mock 替代真实资源申请。
+</Note>
+
+## OpenAI SandboxAgent 验收
+
+```bash
+cd xapi-cli
+
+export XAPI_SANDBOX_KEY='sk-sandbox-test-...'
+export XAPI_AI_KEY='sk-ai-production-...'
+
+npm run test:sandbox:openai -- \
+  --host sandbox.test.xapi.to \
+  --provider daytona \
+  --model deepseek-v4-pro
+
+unset XAPI_SANDBOX_KEY XAPI_AI_KEY
+```
+
+通过条件包括：
+
+- `ai.xapi.to` DeepSeek probe 返回预期 marker；
+- `SandboxAgent` 实际产生 Shell tool calls；
+- Daytona 实例写入并读取 Sandbox marker；
+- `execCount` 足以证明任务不是模型直接编造；
+- `shellMarkerSeen = true`；
+- 实例终态为 `TERMINATED`；
+- operations、events、usageSegments、billingPeriods 均有证据；
+- `activeInstances = 0`；
+- JSON 报告不包含 Key。
+
+## 当前测试缺口
+
+| 缺口 | 影响 | 完成条件 |
+| --- | --- | --- |
+| 没有测试 AI Gateway | SDK E2E 是正式 AI + 测试 Sandbox 的混合环境 | 提供独立 AI 测试域名、路由、账户与日志库 |
+| OpenAI adapter 仅验证空 Manifest + Shell | 尚不能声明支持 mounts/snapshots/env materialization | 实现映射并增加真实正反例 |
+| GPU 依赖实时容量与账户配额 | 全套验收可能因外部前置条件失败 | 独立的可用测试 GPU 配额或明确的条件式 gate |
+| Cloudflare 公网预览有 DNS/TLS 就绪窗口 | “拿到 URL”不能直接等价为 Web 成功 | 外部 HTTP marker 在有界重试内返回 200 |
+| 本地开发站与测试站容易混淆 | 页面可能来自 localhost，但数据打到远程测试 API | 报告和 UI 明确显示环境与 Gateway 主机 |
+
+<Warning>
+  在上述缺口关闭前，报告应使用准确措辞：“Sandbox test E2E 通过”或
+  “OpenAI Agent mixed-environment E2E 通过”，不要写成“全 test.xapi.to 链路通过”。
+</Warning>
+
+## 失败后的强制清理
+
+```bash
+export XAPI_SANDBOX_HOST=sandbox.test.xapi.to
+
+npx xapi-to sandbox history --state ACTIVE --page-size 100 --format table
+npx xapi-to sandbox get <id> --format pretty
+npx xapi-to sandbox terminate <id> --wait-timeout 5m
+npx xapi-to sandbox history --state ACTIVE --page-size 100 --format table
+```
+
+只有最后一次查询确认没有本次遗留实例，测试才能结束。若清理本身失败，应把实例 ID、当前
+状态和错误作为最高优先级遗留事项交接。

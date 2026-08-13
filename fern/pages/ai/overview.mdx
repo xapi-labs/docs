@@ -1,0 +1,70 @@
+---
+title: AI Gateway
+subtitle: 统一协议、多上游路由、自动故障转移与透明 Token 计费。
+---
+
+AI Gateway 通过 `https://ai.xapi.to` 统一调用 Claude、GPT、Gemini、DeepSeek、
+Kimi 等主流模型。应用使用 Anthropic Messages 或 OpenAI Chat Completions 协议，
+无需适配 xAPI 私有请求格式。
+
+## 工作机制
+
+同一模型可以由多个上游提供。Gateway 根据所选策略和实时健康状态选择上游，
+在限频、超时或服务异常时切换备用源，并通过响应头返回实际路由和计费信息。
+
+<CardGroup cols={2}>
+  <Card title="协议兼容" icon="code">
+    支持 Anthropic Messages 与 OpenAI Chat Completions；现有 SDK 通常只需修改
+    Base URL 和 API Key。
+  </Card>
+  <Card title="多上游路由" icon="route">
+    使用 `quality`、`speed` 或 `cost` 策略，在健康供应商中选择质量、速度或价格
+    更合适的路径。
+  </Card>
+  <Card title="自动故障转移" icon="shield-check">
+    上游限频、5xx 或超时时尝试备用源。可通过 `X-Routing-Provider`、
+    `X-Routing-Attempts` 等响应头核对路由。
+  </Card>
+  <Card title="透明计费" icon="coins">
+    按实际输入、输出和缓存 Token 结算；非流式请求通过 `X-AI-Cost` 返回本次费用。
+  </Card>
+</CardGroup>
+
+## 接入方式
+
+| 用法 | Base URL | 适合场景 |
+| --- | --- | --- |
+| Anthropic 协议 | `https://ai.xapi.to` | Claude Code、Anthropic SDK |
+| OpenAI 协议 | `https://ai.xapi.to/v1` | OpenAI SDK、Codex、DeepSeek 等模型 |
+| 指定策略 | `https://ai.xapi.to/{strategy}/v1` | 显式选择 `quality / speed / cost` |
+| 直连上游 | `https://{host}.p.xapi.to/v1` | 必须锁定某个供应商时 |
+
+## 适用场景
+
+- 为现有 OpenAI 或 Anthropic 应用增加多供应商容灾
+- 在 Claude Code、Codex、Cursor、Cline 等开发工具中统一使用一个 API Key
+- 在成本、速度和质量之间按请求选择路由策略
+- 使用 DeepSeek、Claude、GPT、Gemini 等不同模型而不更换客户端协议
+- 通过流式响应、Tool Calling 和多模态能力构建 AI 应用
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="快速开始" href="/ai/quickstart" icon="rocket">
+    使用 curl 完成首次 Anthropic 或 OpenAI 协议调用。
+  </Card>
+  <Card title="模型与价格" href="/ai/models" icon="coins">
+    查看模型、上游和实时定价。
+  </Card>
+  <Card title="开发工具集成" href="/ai/integrations/claude-code" icon="terminal">
+    配置 Claude Code、Codex、Cursor 等客户端。
+  </Card>
+  <Card title="AI API 参考" href="/ai/api" icon="book">
+    查看端点、鉴权、响应头和错误码。
+  </Card>
+</CardGroup>
+
+<Info>
+  AI Gateway 不负责执行 Shell 或管理云实例。需要隔离代码执行、文件、端口或 GPU 时，
+  请使用独立的 [Sandbox](/sandbox/overview) 产品。
+</Info>

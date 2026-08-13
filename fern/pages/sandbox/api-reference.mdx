@@ -1,0 +1,215 @@
+---
+title: 全部 REST API 与测试
+subtitle: 17 个 Sandbox 接口集中在一个页面，按资源分组展开并直接调用 Test Gateway。
+---
+
+<Warning>
+  Test Gateway 会连接真实供应商并产生真实费用。执行创建接口前先获取报价并设置预算上限；
+  保存实例 ID，并始终在 `finally` 中调用终止接口。
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="发现与报价" icon="fa-solid fa-magnifying-glass-dollar" href="#发现与报价">
+    3 个接口：规格、环境与报价。
+  </Card>
+  <Card title="实例生命周期" icon="fa-solid fa-arrows-rotate" href="#实例生命周期">
+    6 个接口：列表、创建、详情、暂停、恢复与终止。
+  </Card>
+  <Card title="执行与制品" icon="fa-solid fa-terminal" href="#执行与制品">
+    6 个接口：Shell、文件、目录、端口与扩展。
+  </Card>
+  <Card title="审计与历史" icon="fa-solid fa-clock-rotate-left" href="#审计与历史">
+    2 个接口：实例历史与四类审计流。
+  </Card>
+</CardGroup>
+
+每个组件都包含方法、地址、路径参数、查询参数、请求体和发送按钮。环境固定为
+`https://sandbox.test.xapi.to`；需要身份的接口在组件内填写 `XAPI-Key`。
+
+## Sandbox API 端到端测试流程
+
+<Steps>
+  <Step title="无费用连通性检查">
+    展开 **列出可用规格**，点击 **Try it → Send request**。预期 HTTP `200`，并确认目标
+    offering 的 `capabilities.exec=true`。这一步无需 Key，也不会创建资源。
+  </Step>
+  <Step title="获取报价">
+    展开 **获取 Sandbox 报价**，在 API Explorer 中填写 `XAPI-Key`，将
+    `requirements.capabilities` 设为 `exec, files`，并设置
+    `maxEstimatedHourlyUsd=0.20`。预期 HTTP `201`；复制响应中的 `quoteId`、
+    `expiresAt` 和 `estimatedHourlyUsd`。报价本身不创建实例。
+  </Step>
+  <Step title="创建并保存实例 ID">
+    展开 **创建 Sandbox 实例**，把上一步的 `quoteId` 填入 `selection.quoteId`，并把
+    `idempotencyKey` 改成你本次测试唯一的值，例如
+    `manual-browser-20260813-001`。预期 HTTP `202`；立即保存响应中的 `id`。
+    此时 `observedState=PROVISIONING` 仍不可执行任务。
+  </Step>
+  <Step title="等待 RUNNING 并执行 marker">
+    用 **查询实例详情** 每 2 秒查询同一个 `id`，直到 `observedState=RUNNING`。随后在
+    **执行 Shell 命令** 中执行 `printf 'MANUAL_TEST_OK=42\n'`。HTTP 应为 `201`，且
+    响应同时满足 `exitCode=0`、`stdout` 包含 `MANUAL_TEST_OK=42`。
+  </Step>
+  <Step title="无论成功失败都终止">
+    在 **销毁实例** 中填写相同实例 `id` 和新的动作幂等键。提交后继续查询详情，直到
+    `observedState=TERMINATED` 或终态 `FAILED`。关闭网页不能代替终止实例。
+  </Step>
+  <Step title="检查审计、费用和残留">
+    查询四类审计流：`operations` 中 CREATE/EXEC/TERMINATE 应成功，`events` 应覆盖
+    RUNNING 与终态，`usageSegments` 不应有开放段，`billingPeriods` 应全部结算。
+    最后调用 **列出当前实例** 或以 `state=ACTIVE` 查询历史，确认没有本次活动实例。
+  </Step>
+</Steps>
+
+<Tip>
+  API Explorer 里的 Key 只填在凭证输入框，不要写入请求 body、metadata、截图或文档源码。
+  测试主机必须显示为 `https://sandbox.test.xapi.to`。
+</Tip>
+
+### 本地新版 CLI 一键验收
+
+如果只想最快确认真实链路，当前未发布的新版 CLI 可从本地源码运行。它会自动执行
+`quote → create → wait → exec → terminate → cost`：
+
+```bash
+cd /Users/daxiongya/Desktop/Projects/web3/x402/bsc/xapi-workspace/xapi-cli
+npm run build
+
+node dist/index.js sandbox run \
+  --host sandbox.test.xapi.to \
+  --capabilities exec,files \
+  --max-hourly-usd 0.20 \
+  --command 'printf "MANUAL_TEST_OK=42\n"' \
+  --format pretty
+```
+
+通过时重点看：`readyState=RUNNING`、`result.exitCode=0`、marker 出现在 `stdout`、
+`cleanup.state=TERMINATED`、`finalState=TERMINATED`，并记录服务端返回的 `totalCost`。
+
+## 发现与报价
+
+### 列出可用规格
+
+无副作用、无需鉴权。用于查看当前资源、能力、生命周期和价格。
+
+<RunnableEndpoint endpoint="GET /v1/offerings" />
+
+### 列出预置环境
+
+无副作用、无需鉴权。用于选择 `requirements.environmentId`。
+
+<RunnableEndpoint endpoint="GET /v1/environments" collapsed />
+
+### 获取 Sandbox 报价
+
+需要鉴权，但不会创建实例。先设置 `maxEstimatedHourlyUsd`，保存返回的 `quoteId`。
+
+<RunnableEndpoint endpoint="POST /v1/quotes" collapsed />
+
+## 实例生命周期
+
+<Warning>
+  从本组开始会读取或改变账户资源。创建后必须记录实例 ID，并在所有成功、失败和中断路径中终止。
+</Warning>
+
+### 列出当前实例
+
+<RunnableEndpoint endpoint="GET /v1/sandboxes" collapsed />
+
+### 创建 Sandbox 实例
+
+返回 `202` 只代表请求已接受。重试同一创建必须复用 `idempotencyKey`。
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes" collapsed />
+
+### 查询实例详情
+
+轮询到 `observedState=RUNNING` 后再执行命令或文件操作。
+
+<RunnableEndpoint endpoint="GET /v1/sandboxes/{id}" collapsed />
+
+### 暂停实例
+
+仅在 offering 声明支持 suspension 时使用。
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/suspend" collapsed />
+
+### 恢复实例
+
+恢复后继续查询详情，直到实例重新进入 `RUNNING`。
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/resume" collapsed />
+
+### 终止实例
+
+放入 `finally`，提交后继续等待 `TERMINATED` 或供应商终态 `FAILED`。
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/terminate" collapsed />
+
+## 执行与制品
+
+### 执行 Shell 命令
+
+HTTP 成功并不等于命令成功；还必须检查 `exitCode=0`。
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/commands" collapsed />
+
+### 写入文件
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/files" collapsed />
+
+### 读取文件
+
+<RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files" collapsed />
+
+### 列出文件
+
+<RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files/list" collapsed />
+
+### 获取端口访问地址
+
+实例内服务必须已经监听目标端口，并且 offering 声明 `ports` 能力。
+
+<RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/ports/{port}" collapsed />
+
+### 调用供应商扩展
+
+只调用 offering 明确声明的扩展，例如 `runpod.connection_info`。
+
+<RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/extensions/{extensionId}" collapsed />
+
+## 审计与历史
+
+### 查询实例历史
+
+按状态、实例 ID、provider 和时间范围检索，用于清理门禁与费用核对。
+
+<RunnableEndpoint endpoint="GET /v1/sandbox-history" collapsed />
+
+### 查询实例审计流
+
+分别选择 `operations`、`events`、`usageSegments` 或 `billingPeriods`。
+
+<RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/audit" collapsed />
+
+## 完成标准
+
+<Steps>
+  <Step title="业务结果通过">
+    HTTP 状态正确；Shell 同时满足 `exitCode=0`；文件和公开 URL 包含预期制品。
+  </Step>
+  <Step title="实例进入终态">
+    终止后继续查询，直到 `observedState=TERMINATED` 或供应商终态 `FAILED`。
+  </Step>
+  <Step title="审计和费用完整">
+    操作、事件、用量段和账期均可查询，费用使用服务端 `totalCost`。
+  </Step>
+  <Step title="没有资源遗留">
+    当前实例和 ACTIVE 历史中没有本次测试仍在计费的实例。
+  </Step>
+</Steps>
+
+<Info>
+  需要生成语言代码和查看完整响应 Schema 时，可使用侧栏的
+  **逐接口 API Reference**；日常浏览和试调直接留在本页即可。
+</Info>

@@ -1,0 +1,227 @@
+---
+title: REST API 调用流程
+subtitle: 从测试报价到创建、执行、审计和销毁；每一步都能用 curl 或 API Explorer 验证。
+---
+
+Sandbox 是有生命周期的计费资源，不是普通的一次性 API。一个完整调用必须包含
+**资源选择、状态等待、业务执行、审计和清理**。仅收到创建或销毁操作的 HTTP 200/202，
+不代表实例已经完成状态转换。
+
+<CardGroup cols={3}>
+  <Card
+    title="全部接口与测试"
+    icon="fa-solid fa-code"
+    href="/sandbox/api"
+  >
+    在一个页面查看并测试全部 17 个接口。
+  </Card>
+  <Card title="CLI 安全封装" icon="fa-solid fa-terminal" href="/sandbox/cli">
+    使用自动报价、等待、执行和 finally 清理的一次性命令。
+  </Card>
+  <Card title="日志与审计" icon="fa-solid fa-clock-rotate-left" href="/sandbox/testing">
+    在 Console 中核对调用、状态、用量、账期与历史实例。
+  </Card>
+</CardGroup>
+
+## 环境与鉴权
+
+| 环境 | Base URL | 用途 |
+| --- | --- | --- |
+| 测试 | `https://sandbox.test.xapi.to` | 文档试调、集成测试、发布前验收 |
+| 生产 | `https://sandbox.xapi.to` | 正式工作负载 |
+
+所有需要账户身份的接口接受：
+
+```http
+XAPI-Key: sk-xapi-...
+```
+
+<Warning>
+  测试 Gateway 仍会连接真实供应商、创建真实资源并从测试账户结算。不要把 API Key
+  写进 URL、源码、远端命令或截图；每次创建后都必须销毁实例。
+</Warning>
+
+## 完整生命周期
+
+<Steps>
+  <Step title="查看规格与环境">
+    调用 `GET /v1/offerings` 和 `GET /v1/environments`，确认资源、能力、暂停支持和价格。
+    这两个接口不会创建实例。
+  </Step>
+  <Step title="按需求报价">
+    调用 `POST /v1/quotes`，声明 `exec / files / ports`、CPU、内存、GPU、区域和
+    `maxEstimatedHourlyUsd`。保存返回的 `quoteId` 和 `expiresAt`。
+  </Step>
+  <Step title="创建实例">
+    调用 `POST /v1/sandboxes`，把 `quoteId` 放入 `selection`。为每个业务任务生成稳定的
+    `idempotencyKey`；如果创建响应丢失，重试必须复用同一个 key。
+  </Step>
+  <Step title="等待 RUNNING">
+    创建接口返回 `202 Accepted` 后，轮询 `GET /v1/sandboxes/{id}`。
+    只有 `observedState=RUNNING` 才能执行命令或访问文件。
+  </Step>
+  <Step title="执行工作负载">
+    根据 offering 能力调用 commands、files、ports 或 extensions。Shell 成功同时要求
+    HTTP 成功且响应中的 `exitCode=0`。
+  </Step>
+  <Step title="检查审计">
+    调用 `GET /v1/sandboxes/{id}/audit`，分别检查 `operations`、`events`、
+    `usageSegments` 和 `billingPeriods`。
+  </Step>
+  <Step title="销毁并确认终态">
+    在 `finally` 或 shell `trap` 中调用 `POST /v1/sandboxes/{id}/terminate`，随后继续轮询，
+    直到 `observedState=TERMINATED` 或 provider-terminal `FAILED`。最后核对 `totalCost`。
+  </Step>
+</Steps>
+
+## 在文档中试调
+
+打开侧边栏的 **全部 REST API 与测试**。17 个接口按四类集中在同一页，组件内可以填写
+参数、发送 Test 请求并查看完整响应。需要语言代码或完整 Schema 时再进入**逐接口 API Reference**。
+
+<Steps>
+  <Step title="选择 Test 环境并鉴权">
+    环境保持 `Test`；在鉴权框输入测试账户的 `XAPI-Key`。不要把 Key 放进 URL 或请求体。
+  </Step>
+  <Step title="报价并保存 quoteId">
+    调用**获取 Sandbox 报价**。它不会创建资源，但会验证鉴权、预算和规格选择。
+  </Step>
+  <Step title="创建并保存 instance id">
+    把 `quoteId` 放入 `selection.quoteId`，使用稳定且唯一的 `idempotencyKey` 创建实例。
+  </Step>
+  <Step title="等待 RUNNING 后执行">
+    使用**查询实例详情**轮询；只有 `observedState=RUNNING` 后才调用命令、文件或端口接口。
+  </Step>
+  <Step title="终止、等待和审计">
+    无论中间是否成功，都调用**终止实例**，确认终态后查询审计与历史。
+  </Step>
+</Steps>
+
+### 直接测试报价接口
+
+下面是内嵌的真实请求构建器。它只生成报价，不创建实例：
+
+<RunnableEndpoint endpoint="POST /v1/quotes" />
+
+<Tip>
+  Explorer 会根据 OpenAPI 示例自动生成 curl、TypeScript、Python 等调用代码。页面不会
+  把你的 API Key写入仓库；但共享屏幕或录屏时仍应清空鉴权框。
+</Tip>
+
+## 一键测试脚本
+
+下面的脚本只连接测试 Gateway，验证 quote → create → wait → exec → audit → terminate。
+它要求本机安装 `curl` 和 `jq`，并通过 `trap` 尽力清理实例。
+
+<Accordion title="展开完整 curl 生命周期脚本">
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+base_url="https://sandbox.test.xapi.to"
+read -rsp "XAPI test key: " XAPI_KEY
+printf '\n'
+
+instance_id=""
+cleanup() {
+  if [[ -n "$instance_id" ]]; then
+    curl -fsS -X POST "$base_url/v1/sandboxes/$instance_id/terminate" \
+      -H "XAPI-Key: $XAPI_KEY" \
+      -H "Content-Type: application/json" \
+      -d "{\"idempotencyKey\":\"docs-terminate-$instance_id\"}" >/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+quote_json="$(curl -fsS -X POST "$base_url/v1/quotes" \
+  -H "XAPI-Key: $XAPI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requirements": {"capabilities": ["exec", "files"]},
+    "maxEstimatedHourlyUsd": "0.20"
+  }')"
+quote_id="$(jq -er '.quoteId' <<<"$quote_json")"
+
+create_key="docs-create-$(date +%s)-$RANDOM"
+create_json="$(curl -fsS -X POST "$base_url/v1/sandboxes" \
+  -H "XAPI-Key: $XAPI_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"selection\": {\"quoteId\": \"$quote_id\"},
+    \"metadata\": {\"client\": \"docs-curl\", \"purpose\": \"sandbox-api-test\"},
+    \"idempotencyKey\": \"$create_key\",
+    \"policy\": {\"resumeOnAccess\": false}
+  }")"
+instance_id="$(jq -er '.id' <<<"$create_json")"
+printf 'instance=%s\n' "$instance_id"
+
+for _ in $(seq 1 90); do
+  detail="$(curl -fsS "$base_url/v1/sandboxes/$instance_id" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  state="$(jq -r '.observedState' <<<"$detail")"
+  [[ "$state" == "RUNNING" ]] && break
+  [[ "$state" == "FAILED" || "$state" == "TERMINATED" ]] && {
+    jq . <<<"$detail"; exit 1;
+  }
+  sleep 2
+done
+[[ "${state:-}" == "RUNNING" ]] || { echo "RUNNING timeout" >&2; exit 1; }
+
+exec_json="$(curl -fsS -X POST "$base_url/v1/sandboxes/$instance_id/commands" \
+  -H "XAPI-Key: $XAPI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"python3 -c \"print(6 * 7)\"","timeoutSeconds":60}')"
+jq -e '.exitCode == 0 and (.stdout | contains("42"))' <<<"$exec_json" >/dev/null
+
+for kind in operations events usageSegments billingPeriods; do
+  curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=$kind&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY" | jq '{kind,total}'
+done
+
+cleanup
+trap - EXIT INT TERM
+
+for _ in $(seq 1 90); do
+  final_json="$(curl -fsS "$base_url/v1/sandboxes/$instance_id" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  final_state="$(jq -r '.observedState' <<<"$final_json")"
+  [[ "$final_state" == "TERMINATED" || "$final_state" == "FAILED" ]] && break
+  sleep 2
+done
+jq '{id,observedState,totalCost,auditCounts}' <<<"$final_json"
+[[ "$final_state" == "TERMINATED" || "$final_state" == "FAILED" ]]
+```
+
+</Accordion>
+
+## 推荐：CLI 安全封装
+
+如果只是验证 Sandbox 是否能执行命令，优先使用 CLI。它已封装报价、等待和 finally 清理：
+
+```bash
+XAPI_SANDBOX_HOST=sandbox.test.xapi.to \
+npx xapi-to sandbox run \
+  --capabilities exec,files \
+  --max-hourly-usd 0.20 \
+  --command 'python3 -c "print(6 * 7)"' \
+  --format pretty
+```
+
+成功条件不只是 stdout 包含 `42`，还应确认 `cleanup.state`、`finalState`、`totalCost`
+以及 Console 中对应的操作和账期记录。
+
+## 常见错误
+
+| 状态 | 含义 | 处理 |
+| --- | --- | --- |
+| `400` | 参数错误或没有兼容规格 | 重新查看 offerings，减少能力或调整预算 |
+| `401` | API Key 缺失或无效 | 检查鉴权框/请求头，不要把 key 放进 URL |
+| `402` | 余额或密钥限额不足 | 在测试账户充值或调整密钥额度 |
+| `409` | 当前状态不允许操作 | 查询实例状态，等待正在执行的状态变更结束 |
+| `429` | 创建频率过高 | 不要循环创建；复用相同 idempotencyKey 并退避 |
+
+<Info>
+  需要 OpenAI Agents SDK + DeepSeek 的组合流程，请继续阅读
+  [AI + Sandbox Agent](/sandbox/openai-agents)。
+</Info>

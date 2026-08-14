@@ -1,0 +1,148 @@
+---
+title: Sandbox 概览与核心概念
+subtitle: 为 AI Agent 提供按能力选型、统一生命周期、按秒计费且完整可审计的隔离云环境。
+---
+
+xAPI Sandbox 让应用和 AI Agent 通过一套 Consumer API 使用不同云计算供应商。
+调用方描述需要的资源、能力和预算，Gateway 负责选择可售规格、创建实例、统一状态、
+记录用量并完成结算。供应商凭证由平台保管，不进入提示词、用户代码或 Sandbox 环境。
+
+```text
+AI / Application
+      │  xAPI Key + resource requirements
+      ▼
+xAPI Sandbox Gateway
+      │  quote · lifecycle · audit · billing
+      ├── Daytona / E2B / Runloop / Modal / Vercel
+      ├── Cloudflare Sandbox
+      └── RunPod GPU
+```
+
+<CardGroup cols={3}>
+  <Card title="按能力选型" icon="sliders">
+    请求 `exec`、`files`、`ports`、CPU、内存、GPU 或区域等条件，Gateway 在当前可售
+    Offering 中选择满足条件且符合预算的规格。
+  </Card>
+  <Card title="统一生命周期" icon="arrows-rotate">
+    不论底层供应商如何命名状态，调用方只处理统一的
+    `PROVISIONING / RUNNING / SUSPENDED / TERMINATED / FAILED`。
+  </Card>
+  <Card title="审计与结算" icon="receipt">
+    每次创建、执行、文件、端口和状态操作都有日志；状态事件、用量段与结算账单可独立查询。
+  </Card>
+</CardGroup>
+
+## 适合哪些任务
+
+| 场景 | Sandbox 提供的能力 | 典型结果 |
+| --- | --- | --- |
+| AI 编码 Agent | `exec` + `files` | 修改代码、运行测试、取回补丁或报告 |
+| CI 复现与自动修复 | 隔离依赖与命令执行 | 复现日志、修复结果、测试状态 |
+| 数据分析 | 上传文件 + Python/Node 环境 | JSON、CSV、图表或分析报告 |
+| 多 Agent 并行 | 每个 Agent 独立实例 | 避免依赖、分支和临时文件互相污染 |
+| Web 预览与临时 API | `files` + `exec` + `ports` | 可在浏览器访问的临时公网 URL |
+| GPU 作业 | GPU 规格或供应商扩展 | 推理、训练或公网连接信息 |
+| 可恢复长任务 | `suspend` / `resume` | 保留文件系统并降低空闲期成本 |
+
+<Tip>
+  如果任务只需要运行一条命令，优先使用 [`sandbox run`](/sandbox/cli#一键执行推荐)。
+  它会自动完成报价、创建、等待、执行和销毁，遗留实例风险最低。
+</Tip>
+
+## 四个核心对象
+
+### Offering
+
+Offering 是供应商注册并通过平台验证的可售规格，声明：
+
+- CPU、内存、卷、GPU 和区域；
+- `exec`、`files`、`ports`、快照与扩展能力；
+- 是否支持挂起、恢复，以及挂起后保留文件系统、内存或进程的语义；
+- 各状态的估算小时单价与底层计费组件。
+
+Offering 是动态目录。不要把某家供应商的能力或价格硬编码进 Agent；运行前读取目录或报价。
+
+### Quote
+
+Quote 把资源需求、能力条件和价格上限解析成一个短时有效的选型结果。报价不会创建实例，
+适合在花钱前确认供应商、规格、运行单价和首次预留。
+
+```json
+{
+  "requirements": {
+    "cpu": { "min": 2 },
+    "memoryGiB": { "min": 4 },
+    "capabilities": ["exec", "files"]
+  },
+  "maxEstimatedHourlyUsd": "0.20"
+}
+```
+
+### Sandbox instance
+
+实例是实际计费资源。创建返回 `202` 或 `PROVISIONING` 只表示请求已受理；只有服务端
+观测状态进入 `RUNNING` 后才可执行命令。任务结束后必须等待 `TERMINATED`，不能把
+“已发送 terminate 请求”当作清理完成。
+
+```text
+PROVISIONING ──► RUNNING ──► SUSPENDED ──► RUNNING
+                     │                         │
+                     └──────────► TERMINATED ◄┘
+                                  
+任意阶段的不可恢复错误 ─────────► FAILED
+```
+
+### Audit and billing
+
+每个实例包含四类独立证据：
+
+| 类型 | 回答的问题 |
+| --- | --- |
+| `operations` | 谁在何时调用了 CREATE、EXEC、FILE、PORT、SUSPEND、TERMINATE？结果如何？ |
+| `events` | 供应商确认的状态何时发生变化？时间来源是什么？ |
+| `usageSegments` | 每段状态持续多久、使用什么资源、产生多少费用？ |
+| `billingPeriods` | 预留、用量、关停等账单是否已经结算？ |
+
+任务成功不仅意味着命令 `exitCode = 0`，还应同时满足：产物验证成功、实例进入终态、
+没有未关闭的用量段或账单、最终活动实例列表中没有本次任务的遗留资源。
+
+## 选择供应商还是自动选型
+
+默认使用自动选型，让 Gateway 在当前健康、符合能力且不超过预算的 Offering 中选择。
+只有下列情况才建议固定供应商：
+
+- 必须验证某个供应商适配器；
+- 必须使用供应商专属能力，例如 Cloudflare Web 预览或 RunPod 连接信息；
+- 任务依赖明确的挂起、快照或网络语义；
+- 需要可复现的验收环境。
+
+<Warning>
+  “支持 Sandbox”不等于所有供应商都支持同一组能力。GPU Offering 可能只提供管理型
+  连接扩展而没有标准 `exec/files`；Cloudflare 当前 Offering 也可能不支持显式
+  `suspend/resume`。始终以实时 Offering 声明为准。
+</Warning>
+
+## 安全模型
+
+1. xAPI Key 只由客户端或 Agent 工具执行层发送给 xAPI Gateway。
+2. 供应商 API Key 只存在于已注册的 Provider Adapter 中，消费者不可见。
+3. 不把 xAPI Key 放进提示词、远程命令、环境转储、文件或日志。
+4. 创建请求使用幂等键，避免响应丢失后重复创建计费实例。
+5. 所有多步骤流程都在 `finally` / shell `trap` 中清理，并在结束时核对服务端终态。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="CLI 使用指南" href="/sandbox/cli" icon="terminal">
+    从一键执行到文件、端口、挂起、GPU 与审计
+  </Card>
+  <Card title="REST API 与在线测试" href="/sandbox/api-flow" icon="code">
+    完整调用流程、curl 脚本和 test Gateway API Explorer
+  </Card>
+  <Card title="AI + Sandbox Agent" href="/sandbox/openai-agents" icon="robot">
+    使用 DeepSeek 规划并让 xAPI Sandbox 执行工具
+  </Card>
+  <Card title="测试与日志" href="/sandbox/testing" icon="clipboard-check">
+    test.xapi.to、验收清单与 Console 定位方法
+  </Card>
+</CardGroup>

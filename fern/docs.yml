@@ -13,73 +13,112 @@ logo:
 favicon: ./assets/logo.png
 
 navigation:
-  - section: 介绍
-    slug: intro
+  - section: 产品总览
+    slug: home
     contents:
-      - page: 概览
+      - page: 选择产品
         path: pages/overview.mdx
+        slug: overview
+
+  - section: AI Gateway
+    slug: ai
+    contents:
+      - page: AI Gateway 概览
+        path: pages/ai/overview.mdx
         slug: overview
       - page: 快速开始
         path: pages/quickstart.mdx
         slug: quickstart
-
-  - section: 概念
-    slug: concepts
-    contents:
-      - page: 设计原则
-        path: pages/principles.mdx
-        slug: principles
       - page: 模型与价格
         path: pages/models.mdx
         slug: models
-
-  - section: 集成
-    slug: integrations
-    contents:
-      - page: Claude Code
-        path: pages/integrations/claude-code.mdx
-        slug: claude-code
-      - page: Codex
-        path: pages/integrations/codex.mdx
-        slug: codex
-      - page: Cursor
-        path: pages/integrations/cursor.mdx
-        slug: cursor
-      - page: OpenClaw
-        path: pages/integrations/openclaw.mdx
-        slug: openclaw
-      - page: Hermes Agent
-        path: pages/integrations/hermes.mdx
-        slug: hermes
-      - page: Continue.dev
-        path: pages/integrations/continue-dev.mdx
-        slug: continue-dev
-      - page: Cline
-        path: pages/integrations/cline.mdx
-        slug: cline
-      - page: Windsurf
-        path: pages/integrations/windsurf.mdx
-        slug: windsurf
-      - page: Chatbox 等桌面客户端
-        path: pages/integrations/chatbox.mdx
-        slug: chatbox
-
-  - section: 参考
-    slug: reference
-    contents:
-      - page: API 参考
+      - page: 设计原则
+        path: pages/principles.mdx
+        slug: principles
+      - section: 开发工具集成
+        slug: integrations
+        contents:
+          - page: Claude Code
+            path: pages/integrations/claude-code.mdx
+            slug: claude-code
+          - page: Codex
+            path: pages/integrations/codex.mdx
+            slug: codex
+          - page: Cursor
+            path: pages/integrations/cursor.mdx
+            slug: cursor
+          - page: OpenClaw
+            path: pages/integrations/openclaw.mdx
+            slug: openclaw
+          - page: Hermes Agent
+            path: pages/integrations/hermes.mdx
+            slug: hermes
+          - page: Continue.dev
+            path: pages/integrations/continue-dev.mdx
+            slug: continue-dev
+          - page: Cline
+            path: pages/integrations/cline.mdx
+            slug: cline
+          - page: Windsurf
+            path: pages/integrations/windsurf.mdx
+            slug: windsurf
+          - page: Chatbox 等桌面客户端
+            path: pages/integrations/chatbox.mdx
+            slug: chatbox
+      - page: AI API 参考
         path: pages/api.mdx
         slug: api
-      - page: 计费机制
+      - page: AI 计费机制
         path: pages/billing.mdx
         slug: billing
+
+  - section: Sandbox
+    slug: sandbox
+    icon: fa-solid fa-cube
+    collapsed: open-by-default
+    contents:
+      - page: 概览与核心概念
+        path: pages/sandbox/overview.mdx
+        slug: overview
+      - page: CLI 使用指南
+        path: pages/sandbox/cli.mdx
+        slug: cli
+      - page: REST API 调用流程
+        path: pages/sandbox/api-flow.mdx
+        slug: api-flow
+      - page: 全部 REST API 与测试
+        path: pages/sandbox/api-reference.mdx
+        slug: api
+      - api: 逐接口 API Reference
+        slug: api-reference
+        icon: fa-solid fa-code
+        paginated: true
+        display-errors: true
+        playground:
+          environments:
+            - Test
+        layout:
+          - discovery
+          - lifecycle
+          - execution
+          - audit
+      - page: AI + Sandbox Agent
+        path: pages/sandbox/openai-agents.mdx
+        slug: openai-agents
+      - page: 测试环境与日志
+        path: pages/sandbox/testing.mdx
+        slug: testing
+
+  - section: 帮助
+    slug: help
+    contents:
       - page: 常见问题
         path: pages/faq.mdx
         slug: faq
 
 colors:
   accent-primary:
-    light: "#10b981"
+    light: "#03543f"
     dark: "#5fd0a8"
   background:
     light: "#ffffff"

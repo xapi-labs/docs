@@ -1,0 +1,1937 @@
+openapi: 3.0.3
+info:
+  title: xAPI Sandbox API
+  version: 1.0.0
+  description: |
+    创建、操作和审计隔离云端 Sandbox 的 REST API。
+
+    测试环境也会申请真实供应商资源并产生费用。创建实例后必须调用 terminate，
+    并等待实例进入 TERMINATED 或 FAILED。
+servers:
+  - url: https://sandbox.test.xapi.to
+    x-fern-server-name: Test
+    description: 测试 Gateway；连接真实供应商，适合验收和集成测试。
+  - url: https://sandbox.xapi.to
+    x-fern-server-name: Production
+    description: 生产 Gateway。
+tags:
+  - name: Discovery
+    x-displayName: 发现与报价
+    description: 查看环境、资源规格与价格，不创建实例。
+  - name: Lifecycle
+    x-displayName: 实例生命周期
+    description: 创建、查询、暂停、恢复和销毁 Sandbox。
+  - name: Execution
+    x-displayName: 执行、文件与端口
+    description: 在运行中的 Sandbox 内执行命令、处理文件和访问端口。
+  - name: Audit
+    x-displayName: 历史与审计
+    description: 查询实例历史、操作、事件、用量段和账期。
+security:
+  - XapiKey: []
+paths:
+  /v1/offerings:
+    get:
+      operationId: listOfferings
+      summary: 列出可用规格
+      description: 返回当前供应商声明的资源、能力、生命周期与估算价格。该接口不创建资源。
+      tags: [Discovery]
+      security: []
+      x-fern-examples:
+        - name: 当前可用规格
+          response:
+            body:
+              - id: 11111111-1111-4111-8111-111111111111
+                name: General purpose Sandbox
+                description: Isolated CPU Sandbox with shell, files and ports
+                region: null
+                resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3, snapshotGiB: 0 }
+                capabilities: { exec: true, files: true, ports: true, snapshot: true }
+                lifecycle: { suspension: { supported: true, preservesFilesystem: true } }
+                billing: { currency: USD, estimatedHourlyUsdByState: { RUNNING: '0.07693488' } }
+                rollingWindowSeconds: 300
+                shutdownGraceSeconds: 30
+                retentionWindowSeconds: 600
+                provider: { name: Example Sandbox Provider, logoUrl: null }
+      responses:
+        '200':
+          description: 可用规格列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Offering'
+  /v1/environments:
+    get:
+      operationId: listEnvironments
+      summary: 列出预置环境
+      description: 返回可用于 requirements.environmentId 的环境预设。
+      tags: [Discovery]
+      security: []
+      x-fern-examples:
+        - name: Python 环境
+          response:
+            body:
+              - id: python-3.12
+                name: Python 3.12
+                description: Python environment for isolated workloads
+                image: python:3.12
+                os: linux
+                architecture: amd64
+                language: python
+                languageVersion: '3.12'
+                offeringCount: 3
+      responses:
+        '200':
+          description: 环境列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Environment'
+  /v1/quotes:
+    post:
+      operationId: createQuote
+      summary: 获取报价
+      description: |
+        按能力、资源和预算选择一个兼容规格并返回短期 quoteId。不会创建实例，
+        但创建时应尽快使用返回的 quoteId。
+      tags: [Discovery]
+      x-fern-examples:
+        - name: Shell 与文件能力报价
+          request:
+            requirements:
+              capabilities: [exec, files]
+              cpu: { min: 1 }
+              memoryGiB: { min: 1 }
+            maxEstimatedHourlyUsd: '0.20'
+          response:
+            body:
+              quoteId: eyJhbGciOiJIUzI1NiJ9.REDACTED
+              expiresAt: '2026-08-13T08:30:00.000Z'
+              offering:
+                id: 11111111-1111-4111-8111-111111111111
+                name: General purpose Sandbox
+                resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+                capabilities: { exec: true, files: true, ports: true }
+              estimatedHourlyUsd: '0.07693488'
+              usageReservationUsd: '0.00641124'
+              shutdownReservationUsd: '0.00064112'
+              initialReservationUsd: '0.00705236'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+            example:
+              requirements:
+                capabilities: [exec, files]
+                cpu: { min: 1 }
+                memoryGiB: { min: 1 }
+              maxEstimatedHourlyUsd: '0.20'
+      responses:
+        '201':
+          description: 报价成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+  /v1/sandboxes:
+    get:
+      operationId: listSandboxes
+      summary: 列出当前实例
+      description: 返回当前账户拥有的 Sandbox。清理验收时应确认没有本次测试遗留的活动实例。
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: 当前无活动实例
+          response:
+            body: []
+      responses:
+        '200':
+          description: 当前实例列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Sandbox'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createSandbox
+      summary: 创建 Sandbox 实例
+      description: |
+        创建一个连接真实供应商、会产生费用的 Sandbox。获取报价不会创建资源；只有调用本接口后，
+        服务才会预留费用并开始供应实例。
+
+        ## 选择创建方式
+
+        `selection` 中必须且只能提供以下一种方式：
+
+        | 方式 | 适用场景 | 需要注意 |
+        | --- | --- | --- |
+        | `quoteId` | **推荐。** 先按能力、资源和预算调用 `POST /v1/quotes`，确认匹配结果后立即创建 | 报价有效期较短且只用于一个业务创建；过期或对应 offering 已变化时需要重新报价 |
+        | `offeringId` | 已通过 `GET /v1/offerings` 确认并希望固定使用某个具体规格 | 不会按 requirements 重新选择，也没有 `maxEstimatedHourlyUsd` 创建时价格上限 |
+        | `requirements` | 希望服务在创建时动态选择兼容 offering，或允许供应商/规格变化 | 可同时提供 `maxEstimatedHourlyUsd` 作为硬性价格上限；没有兼容规格时返回 `404` |
+
+        `maxEstimatedHourlyUsd` 只适用于 `requirements` 方式。需要 Shell、文件、端口或 GPU 时，
+        应显式声明相应 capability/资源，不要假设所有 offering 都支持。
+
+        ## 幂等重试
+
+        每次业务创建生成一个稳定且唯一的 `idempotencyKey`（最长 160 个字符），并在请求超时、
+        连接中断或未收到响应时复用同一个值。这样可以取回同一次创建，而不是误建第二个计费实例。
+
+        - 同一个业务创建重试：复用原 key，并保持 `selection`、`policy` 等创建参数不变。
+        - 新建另一个实例：使用新的 key。
+        - 使用 `quoteId` 时，同一 key 的重试可复用该报价；不同 key 复用同一报价会返回 `409`。
+        - 同一 key 搭配不兼容的选择或策略：返回 `409 Conflict`。
+
+        ## `202 Accepted` 之后
+
+        `202` 仅表示服务已受理创建请求。响应会立即返回实例 `id`，此时
+        `observedState` 通常是 `PROVISIONING`，**还不能执行命令或读写文件**。
+
+        1. 立即保存响应中的 `id`，它也是后续查询、操作和清理实例的唯一标识。
+        2. 轮询 `GET /v1/sandboxes/{id}`，例如每 2 秒一次，并设置客户端总超时（建议不超过 5 分钟）。
+        3. `RUNNING` 表示实例已就绪；只有此时才能调用 exec、files 或 ports 接口。
+        4. `FAILED` 或 `TERMINATED` 是终态，不能继续等待 `RUNNING`；应查看操作与事件审计定位原因。
+        5. 客户端等待超时不代表实例没有创建。先按 `id` 查询并清理，不要换新 key 盲目重试。
+
+        ## 计费与清理
+
+        创建前服务会检查账户余额并预留初始运行费用及关机费用，余额不足返回 `402`。
+        供应中或运行中的实例都可能产生费用；响应中的初始 `totalCost` 为 `0` 不代表后续免费。
+
+        将 `POST /v1/sandboxes/{id}/terminate` 放在 `finally` 中，并继续轮询实例，直到
+        `observedState` 为 `TERMINATED` 或 `FAILED`。最后读取 `totalCost`、operations、events、
+        usage segments 和 billing periods，确认没有开放账期或遗留活动实例。
+
+        ## 常见失败
+
+        - `400`：选择方式不合法、requirements 无效、quote 无效/过期，或 offering 不支持 `resumeOnAccess`。
+        - `402`：余额不足，无法完成初始费用预留。
+        - `404`：offering 不可用，或 requirements 没有匹配的 offering。
+        - `409`：报价对应的 offering 已变化、报价被另一业务创建使用、达到活动实例上限、幂等参数冲突，或供应商暂时不能创建。
+        - `429`：请求过快；遵循响应中的重试提示，并继续复用原 `idempotencyKey`。
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: 使用 quoteId 创建（推荐）
+          request:
+            selection: { quoteId: REPLACE_WITH_QUOTE_ID }
+            metadata: { client: fern-docs, purpose: sandbox-api-test }
+            idempotencyKey: docs-create-quote-20260813-001
+            policy: { resumeOnAccess: false }
+          response:
+            body:
+              id: 33333333-3333-4333-8333-333333333333
+              idempotencyKey: docs-create-quote-20260813-001
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: PROVISIONING
+              totalCost: '0'
+              createdAt: '2026-08-13T08:19:50.000Z'
+              updatedAt: '2026-08-13T08:19:50.000Z'
+        - name: 固定 offeringId 创建
+          request:
+            selection: { offeringId: 11111111-1111-4111-8111-111111111111 }
+            metadata: { client: fern-docs, purpose: pinned-offering-test }
+            idempotencyKey: docs-create-offering-20260813-001
+            policy: { resumeOnAccess: false }
+          response:
+            body:
+              id: 44444444-4444-4444-8444-444444444444
+              idempotencyKey: docs-create-offering-20260813-001
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: PROVISIONING
+              totalCost: '0'
+              createdAt: '2026-08-13T08:21:00.000Z'
+              updatedAt: '2026-08-13T08:21:00.000Z'
+        - name: 按 requirements 动态选择
+          request:
+            selection:
+              requirements:
+                capabilities: [exec, files]
+                cpu: { min: 1 }
+                memoryGiB: { min: 1 }
+              maxEstimatedHourlyUsd: '0.20'
+            metadata: { client: fern-docs, purpose: dynamic-selection-test }
+            idempotencyKey: docs-create-requirements-20260813-001
+            policy: { resumeOnAccess: false }
+          response:
+            body:
+              id: 55555555-5555-4555-8555-555555555555
+              idempotencyKey: docs-create-requirements-20260813-001
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: PROVISIONING
+              totalCost: '0'
+              createdAt: '2026-08-13T08:22:00.000Z'
+              updatedAt: '2026-08-13T08:22:00.000Z'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSandboxRequest'
+            example:
+              selection:
+                quoteId: REPLACE_WITH_QUOTE_ID
+              metadata:
+                client: fern-docs
+                purpose: sandbox-api-test
+              idempotencyKey: docs-test-change-me
+              policy:
+                resumeOnAccess: false
+      responses:
+        '202':
+          description: 创建请求已接受并返回实例记录；实例通常仍处于 PROVISIONING，尚不可执行任务。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/sandboxes/{id}:
+    get:
+      operationId: getSandbox
+      summary: 查询实例详情
+      description: 返回 observedState、操作摘要、用量、账期和服务端结算的 totalCost。
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: 运行中实例
+          path-parameters:
+            id: 33333333-3333-4333-8333-333333333333
+          response:
+            body:
+              id: 33333333-3333-4333-8333-333333333333
+              idempotencyKey: docs-test-change-me
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: RUNNING
+              lifecyclePhase: RUNNING
+              lastConfirmedState: RUNNING
+              stateVersion: 1
+              policy: { resumeOnAccess: false }
+              resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+              totalCost: '0.00021371'
+              createdAt: '2026-08-13T08:19:50.000Z'
+              updatedAt: '2026-08-13T08:20:00.000Z'
+              auditCounts: { operations: 2, events: 1, usageSegments: 1, billingPeriods: 2 }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      responses:
+        '200':
+          description: 实例详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/sandboxes/{id}/suspend:
+    post:
+      operationId: suspendSandbox
+      summary: 暂停实例
+      description: 仅在 offering.lifecycle.suspension.supported 为 true 时调用。操作完成后轮询实例到 SUSPENDED。
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: 暂停实例
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { idempotencyKey: docs-suspend-example }
+          response:
+            body:
+              id: 22222222-2222-4222-8222-222222222222
+              idempotencyKey: docs-suspend-example
+              type: SUSPEND
+              status: SUCCEEDED
+              expectedState: SUSPENDED
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        $ref: '#/components/requestBodies/StateAction'
+      responses:
+        '201':
+          description: 暂停操作
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/resume:
+    post:
+      operationId: resumeSandbox
+      summary: 恢复实例
+      description: 提交恢复操作后轮询实例，直到 observedState 为 RUNNING。
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: 恢复实例
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { idempotencyKey: docs-resume-example }
+          response:
+            body:
+              id: 22222222-2222-4222-8222-222222222223
+              idempotencyKey: docs-resume-example
+              type: RESUME
+              status: SUCCEEDED
+              expectedState: RUNNING
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        $ref: '#/components/requestBodies/StateAction'
+      responses:
+        '201':
+          description: 恢复操作
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/terminate:
+    post:
+      operationId: terminateSandbox
+      summary: 销毁实例
+      description: |
+        停止资源和计费。提交后必须继续查询实例，直到 observedState 为 TERMINATED 或 FAILED。
+        测试流程应把该调用放在 finally/trap 中。
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: 终止实例
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { idempotencyKey: docs-terminate-example }
+          response:
+            body:
+              id: 22222222-2222-4222-8222-222222222224
+              idempotencyKey: docs-terminate-example
+              type: TERMINATE
+              status: SUCCEEDED
+              expectedState: TERMINATED
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        $ref: '#/components/requestBodies/StateAction'
+      responses:
+        '201':
+          description: 销毁操作
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/commands:
+    post:
+      operationId: executeCommand
+      summary: 执行 Shell 命令
+      description: 需要实例为 RUNNING，且 offering 声明 exec 能力。非零 exitCode 是远端命令失败，不等同于 HTTP 失败。
+      tags: [Execution]
+      x-fern-examples:
+        - name: 验证 Shell 输出
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request:
+            command: "python3 -c \"print('XAPI_SANDBOX_OK=42')\""
+            timeoutSeconds: 60
+          response:
+            body:
+              exitCode: 0
+              stdout: "XAPI_SANDBOX_OK=42\n"
+              stderr: ''
+              truncated: false
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+            example:
+              command: "python3 -c \"print('XAPI_SANDBOX_OK=42')\""
+              timeoutSeconds: 60
+      responses:
+        '201':
+          description: 命令结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommandResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/files:
+    get:
+      operationId: readFile
+      summary: 读取文件
+      description: 读取运行中实例内的 UTF-8 文本或 base64 编码二进制内容。路径必须属于实例工作区。
+      tags: [Execution]
+      x-fern-examples:
+        - name: 读取文本制品
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          query-parameters: { path: result.txt, encoding: utf8 }
+          response:
+            body: { path: result.txt, content: XAPI_SANDBOX_OK=42, encoding: utf8 }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: path
+          in: query
+          required: true
+          description: 相对于 Sandbox 工作区的文件路径；不能包含 `..` 或其他父目录跳转片段。
+          schema: { type: string, maxLength: 4096 }
+          example: result.txt
+        - name: encoding
+          in: query
+          description: 返回内容的编码。文本使用 utf8；二进制文件使用 base64，content 不包含 data URI 前缀。
+          schema: { type: string, enum: [utf8, base64], default: utf8 }
+      responses:
+        '200':
+          description: 文件内容
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: writeFile
+      summary: 写入文件
+      description: 向运行中实例写入 UTF-8 文本或 base64 编码内容。用于上传任务输入和脚本。
+      tags: [Execution]
+      x-fern-examples:
+        - name: 写入任务输入
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { path: input.txt, content: Hello from the xAPI Sandbox API Explorer., encoding: utf8 }
+          response:
+            body: { path: input.txt, written: true }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileWriteRequest' }
+            example:
+              path: input.txt
+              content: Hello from the xAPI Sandbox API Explorer.
+              encoding: utf8
+      responses:
+        '201':
+          description: 写入结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileWriteResult' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/files/list:
+    get:
+      operationId: listFiles
+      summary: 列出文件
+      description: 按限定深度列出实例工作区中的目录和文件，适合在读取制品前确认路径。
+      tags: [Execution]
+      x-fern-examples:
+        - name: 列出工作区
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          query-parameters: { path: '.', depth: 2 }
+          response:
+            body:
+              entries:
+                - { path: input.txt, type: file, size: 45 }
+                - { path: result.txt, type: file, size: 19 }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: path
+          in: query
+          required: true
+          description: 要枚举的工作区目录；使用 `.` 表示当前工作区根目录。
+          schema: { type: string, maxLength: 4096 }
+          example: .
+        - name: depth
+          in: query
+          description: 递归列出的最大层数，取值 1–20；值越大返回条目可能越多。
+          schema: { type: integer, minimum: 1, maximum: 20, example: 2 }
+      responses:
+        '200':
+          description: 文件条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileListResult' }
+  /v1/sandboxes/{id}/ports/{port}:
+    get:
+      operationId: getPortUrl
+      summary: 获取端口访问地址
+      description: 实例内的服务必须已监听该端口，且 offering 声明 ports 能力。
+      tags: [Execution]
+      x-fern-examples:
+        - name: 获取 8080 端口
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333, port: 8080 }
+          response:
+            body:
+              port: 8080
+              url: https://preview.example.invalid
+              token: REDACTED
+              headers: {}
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: port
+          in: path
+          required: true
+          description: Sandbox 内应用实际监听的 TCP 端口号；获取 URL 不会替你启动该服务。
+          schema: { type: integer, minimum: 1, maximum: 65535 }
+          example: 8080
+      responses:
+        '200':
+          description: 公网访问地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortResult' }
+  /v1/sandboxes/{id}/extensions/{extensionId}:
+    post:
+      operationId: invokeExtension
+      summary: 调用供应商扩展
+      description: 仅调用 offering 中声明的扩展，例如 runpod.connection_info。
+      tags: [Execution]
+      x-fern-examples:
+        - name: 获取 RunPod 连接信息
+          path-parameters:
+            id: 33333333-3333-4333-8333-333333333333
+            extensionId: runpod.connection_info
+          request: { input: {}, idempotencyKey: docs-extension-example }
+          response:
+            body:
+              result: { ready: true, connectionType: provider-managed }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: extensionId
+          in: path
+          required: true
+          description: 必须来自 offering.capabilities.extensionIds；不同供应商的 input/output 结构可能不同。
+          schema: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$' }
+          example: runpod.connection_info
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionRequest'
+            example:
+              input: {}
+              idempotencyKey: docs-extension-change-me
+      responses:
+        '201':
+          description: 扩展返回
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExtensionResult' }
+  /v1/sandbox-history:
+    get:
+      operationId: listSandboxHistory
+      summary: 查询实例历史
+      description: 分页查询活动或历史实例，用于清理门禁、成本核对和故障排查。
+      tags: [Audit]
+      x-fern-examples:
+        - name: 查询终态历史
+          query-parameters: { state: HISTORY, page: 1, pageSize: 20 }
+          response:
+            body:
+              items: []
+              total: 33
+              page: 1
+              pageSize: 20
+              totalPages: 2
+              stateCounts: { TERMINATED: 32, FAILED: 1 }
+      parameters:
+        - name: state
+          in: query
+          description: |
+            状态范围。ALL=全部；ACTIVE=尚未终止的实例；HISTORY=TERMINATED/FAILED；
+            其余值只返回对应 observedState。
+          schema:
+            type: string
+            enum: [ALL, ACTIVE, HISTORY, PROVISIONING, RUNNING, SUSPENDED, TERMINATED, FAILED, UNKNOWN]
+            default: ALL
+        - name: search
+          in: query
+          description: 按实例 ID、幂等键、offering 名称或供应商名称进行文本检索。
+          schema: { type: string, maxLength: 160 }
+        - name: provider
+          in: query
+          description: 按供应商名称或服务标识过滤历史记录。
+          schema: { type: string, maxLength: 160 }
+        - name: from
+          in: query
+          description: 创建时间下界，ISO 8601 日期时间，包含边界。
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: 创建时间上界，ISO 8601 日期时间，包含边界。
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          description: 从 1 开始的页码。
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: 每页记录数，范围 1–100。
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: 历史分页结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HistoryPage' }
+  /v1/sandboxes/{id}/audit:
+    get:
+      operationId: getSandboxAudit
+      summary: 查询审计流
+      description: 分别查询 operations、events、usageSegments 或 billingPeriods。
+      tags: [Audit]
+      x-fern-examples:
+        - name: 查询操作审计
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          query-parameters: { kind: operations, page: 1, pageSize: 100 }
+          response:
+            body:
+              kind: operations
+              items:
+                - id: 22222222-2222-4222-8222-222222222224
+                  type: TERMINATE
+                  status: SUCCEEDED
+                  expectedState: TERMINATED
+              total: 5
+              page: 1
+              pageSize: 100
+              totalPages: 1
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: kind
+          in: query
+          required: true
+          description: |
+            审计流类型：operations=用户/系统操作；events=供应商状态事件；
+            usageSegments=按状态切分的用量；billingPeriods=费用预留与最终结算。
+          schema:
+            type: string
+            enum: [operations, events, usageSegments, billingPeriods]
+          example: operations
+        - name: page
+          in: query
+          description: 从 1 开始的审计页码。
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: 每页审计记录数，范围 1–100。
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: 审计分页结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+components:
+  securitySchemes:
+    XapiKey:
+      type: apiKey
+      in: header
+      name: XAPI-Key
+      description: 在 xAPI Console 创建的 API Key。只会发送给 *.xapi.to。
+  parameters:
+    SandboxId:
+      name: id
+      in: path
+      required: true
+      description: xAPI Sandbox 实例 UUID。
+      schema: { type: string, format: uuid }
+      example: 00000000-0000-4000-8000-000000000000
+  requestBodies:
+    StateAction:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              idempotencyKey:
+                type: string
+                maxLength: 160
+                description: 当前状态操作的幂等键；同一动作在响应不确定时复用原值，新动作使用新值。
+          example:
+            idempotencyKey: docs-action-change-me
+  responses:
+    BadRequest:
+      description: 请求参数无效或没有兼容规格
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: API Key 缺失或无效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PaymentRequired:
+      description: 账户余额或密钥额度不足
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: 实例或资源不存在，或者不属于当前账户
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: 实例状态不允许当前操作，或已有状态变更正在执行
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: 创建实例频率超过限制
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      description: 所有非 2xx 响应使用的标准错误结构。
+      properties:
+        statusCode:
+          type: integer
+          description: HTTP 状态码的数值形式，例如 400、401、402、404、409 或 429。
+        message:
+          description: 面向调用方的错误原因；校验失败时可能是多条消息数组。
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+        error:
+          type: string
+          description: HTTP 错误类别，例如 Bad Request、Unauthorized 或 Conflict。
+      example:
+        statusCode: 401
+        message: Missing or invalid XAPI-Key
+        error: Unauthorized
+    MinimumRequirement:
+      type: object
+      description: 某项资源的最低要求；服务可以选择数值更高的 offering，但不会选择更低的规格。
+      required: [min]
+      properties:
+        min:
+          type: number
+          minimum: 0
+          description: 允许的最小资源数量。CPU 以 vCPU 计，内存和磁盘由所属字段决定单位。
+    GpuRequirement:
+      type: object
+      description: GPU 数量和可选型号约束；GPU 实例通常费用更高，应同时设置价格上限。
+      required: [count]
+      properties:
+        count:
+          type: integer
+          minimum: 1
+          maximum: 1024
+          description: 所需 GPU 的最少数量。
+        model:
+          type: string
+          maxLength: 120
+          description: 期望的 GPU 型号或供应商可识别的型号名；省略表示不限定型号。
+    Requirements:
+      type: object
+      description: 资源、环境和能力约束。未声明的资源由选中的 offering 使用默认值。
+      properties:
+        environmentId:
+          type: string
+          maxLength: 120
+          description: GET /v1/environments 返回的预置环境 ID，例如 python-3.12；只匹配支持该环境的 offering。
+        cpu:
+          allOf:
+            - $ref: '#/components/schemas/MinimumRequirement'
+          description: 最低 vCPU 数量要求。
+        memoryGiB:
+          allOf:
+            - $ref: '#/components/schemas/MinimumRequirement'
+          description: 最低内存容量，单位 GiB。
+        volumeGiB:
+          allOf:
+            - $ref: '#/components/schemas/MinimumRequirement'
+          description: 最低持久/工作卷容量，单位 GiB；具体保留行为由 offering 生命周期声明决定。
+        gpu:
+          allOf:
+            - $ref: '#/components/schemas/GpuRequirement'
+          description: GPU 最低数量与型号要求。
+        regions:
+          type: array
+          description: 允许创建实例的区域白名单；匹配其中任意一个区域即可。
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, maxLength: 120 }
+        capabilities:
+          type: array
+          description: |
+            必须具备的能力名称。常用值：exec=执行命令、files=文件读写、ports=端口访问、
+            snapshot=快照；扩展能力以实时 offering 声明为准。
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, maxLength: 160 }
+    QuoteRequest:
+      type: object
+      description: 只做规格匹配、预算检查并生成短期报价；不会创建或计费实例。
+      required: [requirements]
+      properties:
+        requirements:
+          allOf:
+            - $ref: '#/components/schemas/Requirements'
+          description: 本次任务需要的环境、资源、区域和能力约束。
+        maxEstimatedHourlyUsd:
+          type: string
+          pattern: '^\d+(?:\.\d{1,18})?$'
+          description: 每小时预估费用的硬上限，USD 十进制字符串；没有低于该上限的兼容规格时不会报价。
+          example: '0.20'
+      example:
+        requirements:
+          capabilities: [exec, files]
+          cpu: { min: 1 }
+          memoryGiB: { min: 1 }
+        maxEstimatedHourlyUsd: '0.20'
+    Selection:
+      type: object
+      description: |
+        实例规格选择器。quoteId、offeringId、requirements 必须且只能提供一个。
+        推荐先报价再传 quoteId；需要创建时动态匹配才使用 requirements。
+      properties:
+        quoteId:
+          type: string
+          maxLength: 8192
+          description: POST /v1/quotes 返回的短期报价凭证。应在 expiresAt 前尽快使用；每个业务创建单独报价，同一 idempotencyKey 的重试可复用。
+        offeringId:
+          type: string
+          format: uuid
+          description: 固定选择 GET /v1/offerings 返回的具体规格，不进行动态重选。
+        requirements:
+          allOf:
+            - $ref: '#/components/schemas/Requirements'
+          description: 创建时按能力、资源、环境和区域约束动态选择兼容 offering。
+        maxEstimatedHourlyUsd:
+          type: string
+          pattern: '^\d+(?:\.\d{1,18})?$'
+          description: 仅与 requirements 一起使用的每小时预估价格硬上限；超出上限不会创建实例。
+          example: '0.20'
+    CreateSandboxRequest:
+      type: object
+      required: [selection, idempotencyKey]
+      description: |
+        创建真实计费实例。每个业务创建使用一个唯一 idempotencyKey；同一创建的安全重试必须复用它。
+      properties:
+        selection:
+          allOf:
+            - $ref: '#/components/schemas/Selection'
+          description: quoteId、offeringId 或 requirements 三选一，不能同时提供。
+        policy:
+          type: object
+          description: 实例访问与生命周期策略。使用前先确认目标 offering 声明支持相应策略。
+          properties:
+            resumeOnAccess:
+              type: boolean
+              default: false
+              description: 访问已暂停实例时是否自动恢复；offering 不支持该能力时创建会失败。
+        metadata:
+          type: object
+          additionalProperties: true
+          description: 用于关联客户端、任务或模型日志的非敏感元数据。不要写入 API key、令牌或其他密钥。
+        idempotencyKey:
+          type: string
+          maxLength: 160
+          description: |
+            本次业务创建的稳定唯一键。请求结果不确定时复用原值和原参数；创建另一个实例时换新值。
+      example:
+        selection:
+          quoteId: REPLACE_WITH_QUOTE_ID
+        policy:
+          resumeOnAccess: false
+        metadata:
+          client: fern-docs
+          purpose: sandbox-api-test
+        idempotencyKey: docs-test-change-me
+    Environment:
+      type: object
+      description: 可在 requirements.environmentId 中引用的标准运行环境。
+      required: [id, name, offeringCount]
+      properties:
+        id:
+          type: string
+          description: 稳定的环境标识，创建/报价时传给 requirements.environmentId。
+        name:
+          type: string
+          description: 面向用户展示的环境名称。
+        description:
+          type: string
+          description: 环境用途和已包含工具的说明。
+        image:
+          type: string
+          description: 环境对应的镜像或模板标识；仅用于说明，不保证调用方可直接拉取。
+        os:
+          type: string
+          description: 操作系统名称，例如 linux。
+        architecture:
+          type: string
+          description: CPU 架构，例如 amd64 或 arm64。
+        language:
+          type: string
+          description: 预装的主要编程语言，例如 python 或 node。
+        languageVersion:
+          type: string
+          description: 主要编程语言版本。
+        cuda:
+          type: string
+          description: CUDA 版本；仅 GPU 环境可能返回。
+        framework:
+          type: string
+          description: 预装的主要计算/机器学习框架名称。
+        frameworkVersion:
+          type: string
+          description: 主要框架版本。
+        offeringCount:
+          type: integer
+          description: 当前能够提供此环境的活动 offering 数量；为 0 时无法按该环境创建。
+      example:
+        id: python-3.12
+        name: Python 3.12
+        description: Python environment for isolated workloads
+        image: python:3.12
+        os: linux
+        architecture: amd64
+        language: python
+        languageVersion: '3.12'
+        offeringCount: 3
+    ResourceSnapshot:
+      type: object
+      description: 实例实际分配或 offering 声明的资源快照；供应商可以附加扩展资源字段。
+      properties:
+        cpu:
+          type: number
+          description: vCPU 数量。
+        memoryGiB:
+          type: number
+          description: 内存容量，单位 GiB。
+        volumeGiB:
+          type: number
+          description: 工作卷/持久卷容量，单位 GiB。
+        snapshotGiB:
+          type: number
+          description: 快照存储容量或计费基数，单位 GiB。
+        gpu:
+          type: array
+          description: 分配的 GPU 型号与数量；CPU-only offering 通常省略。
+          items:
+            type: object
+            properties:
+              model:
+                type: string
+                description: GPU 型号。
+              count:
+                type: integer
+                description: 该型号 GPU 数量。
+        environment:
+          type: object
+          additionalProperties: true
+          description: 供应商返回的运行环境快照，例如镜像、语言或框架信息。
+      additionalProperties: true
+    SuspensionCapabilities:
+      type: object
+      required: [supported]
+      description: offering 的暂停、恢复和访问时唤醒语义；不要从 supported 推断文件、内存和进程都保留。
+      properties:
+        supported:
+          type: boolean
+          description: 是否支持显式 suspend 操作。
+        preservesFilesystem:
+          type: boolean
+          description: 暂停后恢复时工作区文件是否保留。
+        preservesMemory:
+          type: boolean
+          description: 暂停后恢复时内存内容是否保留。
+        preservesProcesses:
+          type: boolean
+          description: 暂停后恢复时原进程是否继续存在。
+        capacityReserved:
+          type: boolean
+          description: 暂停期间供应商是否仍为该实例保留计算容量；可能影响费用和恢复速度。
+        resumeSupported:
+          type: boolean
+          description: 暂停后是否支持显式 resume。
+        resumeOnAccessSupported:
+          type: boolean
+          description: 是否支持访问 exec/files/ports 时自动恢复。
+        resumeOnAccessMode:
+          type: string
+          enum: [NATIVE, ADAPTER, UNSUPPORTED]
+          description: NATIVE=供应商原生唤醒；ADAPTER=xAPI 适配器先恢复再执行；UNSUPPORTED=不可用。
+        wakeOperations:
+          type: array
+          description: 可以触发访问时唤醒的操作名，例如 exec、files.read、ports.connect。
+          items: { type: string }
+        estimatedHourlyUsd:
+          type: string
+          description: 实例处于 SUSPENDED 时的预估小时费用，USD 十进制字符串。
+    SandboxCapabilities:
+      type: object
+      description: offering 对标准 Sandbox 能力和供应商扩展的声明；调用能力接口前应检查对应布尔值。
+      properties:
+        exec:
+          type: boolean
+          description: 是否支持执行 Shell 命令。
+        files:
+          type: boolean
+          description: 是否支持文件读取、写入和目录枚举。
+        terminal:
+          type: boolean
+          description: 是否支持交互式终端能力；REST command 接口仍以 exec 为准。
+        ports:
+          type: boolean
+          description: 是否支持把实例内监听端口映射为外部访问地址。
+        snapshot:
+          type: boolean
+          description: 是否支持快照相关能力；具体调用方式可能由扩展提供。
+        fork:
+          type: boolean
+          description: 是否支持从现有实例/快照派生新实例。
+        gpu:
+          type: boolean
+          description: 是否提供 GPU 资源；仍需核对 resources.gpu 和具体扩展。
+        extensionIds:
+          type: array
+          description: 允许调用的供应商扩展 ID 白名单；不要调用列表之外的扩展。
+          items: { type: string }
+        suspension:
+          allOf:
+            - $ref: '#/components/schemas/SuspensionCapabilities'
+          description: 规范化后的暂停、恢复和自动唤醒能力。
+      additionalProperties: true
+    OfferingLifecycle:
+      type: object
+      description: offering 的生命周期能力与状态保留语义。
+      properties:
+        suspension:
+          allOf:
+            - $ref: '#/components/schemas/SuspensionCapabilities'
+          description: 暂停状态支持、恢复方式、保留内容和暂停时预估费用。
+    OfferingBilling:
+      type: object
+      description: 根据当前 rate card 和资源计算出的各状态预估费用摘要；最终费用以实例 totalCost 为准。
+      properties:
+        currency:
+          type: string
+          enum: [USD]
+          description: 所有价格和费用字段使用的货币。
+        estimatedHourlyUsdByState:
+          type: object
+          additionalProperties: { type: string }
+          description: 按 PROVISIONING、RUNNING、SUSPENDED 等状态给出的每小时预估费用，值为 USD 十进制字符串。
+        computeDefaultState:
+          type: string
+          enum: [RUNNING]
+          description: 默认产生计算资源费用的状态。
+        storageContinuesWhileSuspended:
+          type: boolean
+          description: 暂停时是否仍存在卷/快照等存储费用；false 不代表所有其他费用必然为零。
+    RateCardComponent:
+      type: object
+      required: [kind, unit, priceUsd]
+      description: 一条计费规则；具体计费基数由 kind 决定。
+      properties:
+        kind:
+          type: string
+          enum: [STATE_TIME, RESOURCE_TIME, OPERATION]
+          description: STATE_TIME=按实例状态时长；RESOURCE_TIME=按资源数量和时长；OPERATION=按调用次数。
+        state:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: 该规则适用的实例状态；OPERATION 规则通常省略。
+        category:
+          type: string
+          enum: [COMPUTE, CAPACITY_RESERVATION, STORAGE, OTHER]
+          description: 费用分类，用于账单归类。
+        resource:
+          type: string
+          enum: [CPU, MEMORY_GIB, VOLUME_GIB, SNAPSHOT_GIB, GPU]
+          description: RESOURCE_TIME 规则计费的资源类型。
+        resourceKey:
+          type: string
+          description: 细分资源键，例如具体 GPU 型号；普通 CPU/内存规则通常省略。
+        operation:
+          type: string
+          description: OPERATION 规则计费的操作名。
+        unit:
+          type: string
+          enum: [SECOND, COUNT]
+          description: 计费单位；时长规则为 SECOND，调用规则为 COUNT。
+        priceUsd:
+          type: string
+          description: 每单位价格，USD 十进制字符串。
+    RateCard:
+      type: object
+      required: [version, currency, components]
+      description: 服务端用于预留和结算费用的费率快照。
+      properties:
+        version:
+          type: integer
+          enum: [1, 2]
+          description: rate card 数据格式版本。
+        currency:
+          type: string
+          enum: [USD]
+          description: 费率货币。
+        components:
+          type: array
+          description: 组成总费用的计费规则列表。
+          items: { $ref: '#/components/schemas/RateCardComponent' }
+    ProviderSummary:
+      type: object
+      description: 实际提供该 offering 的 Sandbox 服务商展示信息。
+      properties:
+        name:
+          type: string
+          description: 服务商名称。
+        logoUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: 服务商 Logo URL；未配置时为 null。
+    Offering:
+      type: object
+      description: 可创建 Sandbox 的实时规格、能力、生命周期和计费声明。
+      required: [id, name, resources, capabilities]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: offering 的稳定 UUID；可用于 selection.offeringId 固定选型。
+        name:
+          type: string
+          description: 面向用户展示的规格名称。
+        description:
+          type: string
+          nullable: true
+          description: 规格用途和供应商适配说明。
+        region:
+          type: string
+          nullable: true
+          description: 默认/固定区域；null 表示区域由供应商自动选择或未固定。
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: 该规格默认分配和计费使用的资源快照。
+        capabilities:
+          allOf:
+            - $ref: '#/components/schemas/SandboxCapabilities'
+          description: 可用的标准能力、扩展 ID 和暂停语义。
+        lifecycle:
+          allOf:
+            - $ref: '#/components/schemas/OfferingLifecycle'
+          description: 规范化生命周期声明。
+        billing:
+          allOf:
+            - $ref: '#/components/schemas/OfferingBilling'
+          description: 按状态计算的预估小时费用摘要。
+        rateCard:
+          allOf:
+            - $ref: '#/components/schemas/RateCard'
+          description: 用于实际预留和结算的费率规则。
+        rateCardVersion:
+          type: integer
+          description: 数据库中的 offering 费率修订号；变更后旧 quote 可能失效。
+        rollingWindowSeconds:
+          type: integer
+          description: 每次预留的滚动用量窗口长度（秒）；不是实例最大运行时间。
+        shutdownGraceSeconds:
+          type: integer
+          description: 为安全销毁预留的关机宽限时长（秒）。
+        retentionWindowSeconds:
+          type: integer
+          description: 终态数据/供应商资源的声明保留窗口（秒）；不等于文件永久保留承诺。
+        provider:
+          allOf:
+            - $ref: '#/components/schemas/ProviderSummary'
+          description: 提供该规格的服务商展示信息。
+      example:
+        id: 11111111-1111-4111-8111-111111111111
+        name: General purpose Sandbox
+        description: Isolated CPU Sandbox with shell, files and ports
+        region: null
+        resources:
+          cpu: 1
+          memoryGiB: 1
+          volumeGiB: 3
+          snapshotGiB: 0
+        capabilities:
+          exec: true
+          files: true
+          ports: true
+          snapshot: true
+          extensionIds: []
+        lifecycle:
+          suspension:
+            supported: true
+            preservesFilesystem: true
+        billing:
+          currency: USD
+          estimatedHourlyUsdByState:
+            RUNNING: '0.07693488'
+            SUSPENDED: '0'
+        rollingWindowSeconds: 300
+        shutdownGraceSeconds: 30
+        retentionWindowSeconds: 600
+        provider:
+          name: Example Sandbox Provider
+          logoUrl: null
+    Quote:
+      type: object
+      description: 按 requirements 匹配出的短期报价与初始资金预留估算；不会创建实例。
+      required: [quoteId, expiresAt, offering, estimatedHourlyUsd]
+      properties:
+        quoteId:
+          type: string
+          description: 创建时传给 selection.quoteId 的签名报价凭证；只用于一个业务创建，同一幂等键重试可复用。
+        expiresAt:
+          type: string
+          format: date-time
+          description: quoteId 失效时间（UTC ISO 8601）；过期后必须重新报价。
+        offering:
+          allOf:
+            - $ref: '#/components/schemas/Offering'
+          description: 本次 requirements 匹配出的具体规格和能力快照。
+        estimatedHourlyUsd:
+          type: string
+          description: offering 在默认运行状态下的预估小时费用，USD 十进制字符串，不是最终扣费。
+        usageReservationUsd:
+          type: string
+          description: 首个滚动用量窗口预计需要预留的金额。
+        shutdownReservationUsd:
+          type: string
+          description: 为实例安全销毁预留的最大关机费用金额。
+        initialReservationUsd:
+          type: string
+          description: 创建前所需初始预留总额，通常等于 usageReservationUsd + shutdownReservationUsd。
+      example:
+        quoteId: eyJhbGciOiJIUzI1NiJ9.REDACTED
+        expiresAt: '2026-08-13T08:30:00.000Z'
+        offering:
+          id: 11111111-1111-4111-8111-111111111111
+          name: General purpose Sandbox
+          resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+          capabilities: { exec: true, files: true, ports: true }
+        estimatedHourlyUsd: '0.07693488'
+        usageReservationUsd: '0.00641124'
+        shutdownReservationUsd: '0.00064112'
+        initialReservationUsd: '0.00705236'
+    Operation:
+      type: object
+      description: 一次生命周期或数据面调用的持久化审计记录。
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 操作记录 UUID，用于日志关联，不是实例 ID。
+        idempotencyKey:
+          type: string
+          description: 此操作的幂等键；重复请求是否属于同一操作由实例 ID 和该值共同确定。
+        type:
+          type: string
+          enum: [CREATE, SUSPEND, RESUME, TERMINATE, EXEC, EXTENSION, FILE_READ, FILE_WRITE, FILE_LIST, PORT_OPEN]
+          description: 操作类型。生命周期操作改变状态；EXEC/FILE/PORT/EXTENSION 是实例内的数据面调用。
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED, TIMED_OUT, CANCELLED]
+          description: 操作执行状态；HTTP 已接受不代表这里已经 SUCCEEDED。
+        expectedState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          nullable: true
+          description: 生命周期操作期望实例最终达到的状态；数据面操作通常为 null。
+        error:
+          type: string
+          nullable: true
+          description: 操作失败、超时或取消时的诊断信息；成功时为 null。
+        input:
+          type: object
+          additionalProperties: true
+          description: 已脱敏/裁剪的操作输入摘要；文件写入只记录路径、编码和大小，不保存文件内容。
+        requestedAt:
+          type: string
+          format: date-time
+          description: Gateway 接受操作请求的时间。
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 适配器实际开始处理的时间；尚未开始时为 null。
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 操作进入终态的时间；仍在执行时为 null。
+        durationMs:
+          type: integer
+          description: 操作实际执行耗时，单位毫秒；并非实例总运行时长。
+        exitCode:
+          type: integer
+          description: EXEC 操作的远端进程退出码；0 通常表示成功，非零表示命令失败但 HTTP 请求可能仍成功。
+        stdoutPreview:
+          type: string
+          description: 为审计保存的标准输出前缀，不保证是完整 stdout。
+        stderrPreview:
+          type: string
+          description: 为审计保存的标准错误前缀，不保证是完整 stderr。
+        outputTruncated:
+          type: boolean
+          description: stdoutPreview 或 stderrPreview 是否因日志大小限制被截断。
+      example:
+        id: 22222222-2222-4222-8222-222222222222
+        idempotencyKey: docs-terminate-example
+        type: TERMINATE
+        status: SUCCEEDED
+        expectedState: TERMINATED
+        error: null
+        requestedAt: '2026-08-13T08:20:00.000Z'
+        startedAt: '2026-08-13T08:20:00.100Z'
+        completedAt: '2026-08-13T08:20:01.200Z'
+        durationMs: 1100
+    State:
+      type: string
+      description: |
+        Sandbox 规范状态：PROVISIONING=正在申请资源；RUNNING=可执行任务；SUSPENDED=已暂停；
+        TERMINATED=已销毁且不可恢复；FAILED=供应或运行失败的终态；UNKNOWN=服务暂时无法确认供应商状态。
+      enum: [PROVISIONING, RUNNING, SUSPENDED, TERMINATED, FAILED, UNKNOWN]
+    StateEvent:
+      type: object
+      description: 供应商状态变化经 Gateway 规范化后的事件；按 sequence 判断实例状态演进顺序。
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: xAPI 保存的事件 UUID。
+        sequence:
+          type: integer
+          description: 当前供应商分配内单调递增的事件序号，用于去重和排序。
+        eventType:
+          type: string
+          enum: [sandbox.state_changed]
+          description: 规范事件类型；当前为 sandbox.state_changed。
+        previousState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: 变化前状态；首个事件或供应商未提供时可能省略。
+        currentState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: 此事件确认的新状态。
+        reason:
+          type: string
+          nullable: true
+          description: 供应商给出的状态变化原因或失败说明；没有原因时为 null。
+        effectiveAt:
+          type: string
+          format: date-time
+          description: 状态变化实际生效时间。
+        observedAt:
+          type: string
+          format: date-time
+          description: 供应商或适配器观测到该状态的时间。
+        receivedAt:
+          type: string
+          format: date-time
+          description: Gateway 收到并保存该事件的时间；可能晚于 observedAt。
+        timestampSource:
+          type: string
+          enum: [PROVIDER_NATIVE, ADAPTER_OBSERVED, INFERRED]
+          description: 时间来源：供应商原生事件、适配器轮询观测或 Gateway 推断。
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: 状态变化时确认的资源快照。
+        status:
+          type: string
+          enum: [ACCEPTED, PROCESSED, REJECTED]
+          description: Gateway 对事件的处理结果；REJECTED 事件不应被视为有效状态证据。
+    UsageSegment:
+      type: object
+      description: 实例在同一状态和同一资源快照下的一段连续用量，是费用结算的时间基础。
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 用量段 UUID。
+        state:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: 此用量段持续期间的规范实例状态。
+        startsAt:
+          type: string
+          format: date-time
+          description: 用量段开始时间。
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 用量段结束时间；活动段可能为 null，终态验收时不应存在开放段。
+        durationSeconds:
+          type: string
+          nullable: true
+          description: 服务端按事件时间计算的持续秒数，以十进制字符串返回以避免精度损失。
+        amount:
+          type: string
+          nullable: true
+          description: 此用量段最终结算金额（USD）；未结算时可能为 null。
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: 该用量段采用的资源数量快照。
+        timestampSource:
+          type: string
+          enum: [PROVIDER_NATIVE, ADAPTER_OBSERVED, INFERRED]
+          description: 开始/结束时间的可信来源。
+        status:
+          type: string
+          enum: [OPEN, CLOSED, SETTLED, UNVERIFIED, VOID]
+          description: OPEN=仍计量；CLOSED=已结束待结算；SETTLED=已结算；UNVERIFIED=状态时间待确认；VOID=不计费。
+    BillingBreakdownLine:
+      type: object
+      description: 账期内某一条 rate card 规则产生的费用明细。
+      properties:
+        quantity:
+          type: string
+          description: 使用量；按时长规则通常是秒数，按操作规则通常是次数。
+        amountUsd:
+          type: string
+          description: 该明细行费用，USD 十进制字符串。
+        component:
+          allOf:
+            - $ref: '#/components/schemas/RateCardComponent'
+          description: 计算该行费用所使用的费率规则快照。
+    BillingBreakdown:
+      type: object
+      description: 账期金额的可审计计算明细。
+      properties:
+        lines:
+          type: array
+          description: 每项状态、资源或操作费用明细。
+          items: { $ref: '#/components/schemas/BillingBreakdownLine' }
+        totalUsd:
+          type: string
+          description: 所有明细行金额之和。
+        durationSeconds:
+          type: string
+          description: 此账期计入费用的总时长（秒）；操作计费可能为 0。
+      additionalProperties: true
+    BillingPeriod:
+      type: object
+      description: 一次用量窗口、关机预留或按操作计费的资金预留与结算记录。
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 账期 UUID。
+        kind:
+          type: string
+          enum: [USAGE, SHUTDOWN, OPERATION]
+          description: USAGE=状态/资源用量；SHUTDOWN=安全销毁预留；OPERATION=按次调用费用。
+        status:
+          type: string
+          enum: [RESERVED, SETTLED, RELEASED, UNVERIFIED]
+          description: RESERVED=已预留未完成；SETTLED=已扣费；RELEASED=未使用并释放；UNVERIFIED=等待人工/系统核对。
+        startsAt:
+          type: string
+          format: date-time
+          description: 账期或资金预留开始时间。
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 账期终止时间；活动账期可能为 null。
+        amount:
+          type: string
+          nullable: true
+          description: 最终实际结算金额（USD）；RESERVED 阶段可能尚未确定。
+        breakdown:
+          allOf:
+            - $ref: '#/components/schemas/BillingBreakdown'
+          description: 此账期的计算明细；没有产生费用时可能为空或省略。
+    AuditCounts:
+      type: object
+      description: 当前实例四类完整审计记录的总数；详情响应可能只内嵌最近若干条，应通过 audit 接口分页读取全部。
+      properties:
+        operations:
+          type: integer
+          description: 操作审计记录总数。
+        events:
+          type: integer
+          description: 状态事件总数。
+        usageSegments:
+          type: integer
+          description: 用量段总数。
+        billingPeriods:
+          type: integer
+          description: 账期记录总数。
+    Sandbox:
+      type: object
+      description: Sandbox 实例当前状态、资源、费用与可选审计摘要。
+      required: [id, offeringId, observedState, totalCost, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 实例 UUID；所有查询、执行、文件、端口、审计和清理接口都使用此值。
+        idempotencyKey:
+          type: string
+          description: 创建实例时使用的业务幂等键，可用于历史检索和重复创建核对。
+        offeringId:
+          type: string
+          format: uuid
+          description: 实际选中的 offering UUID；即使按 requirements 创建也会返回具体值。
+        desiredState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          nullable: true
+          description: 最近一次生命周期操作希望达到的目标状态；没有进行中的状态目标时可能为 null。
+        observedState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: Gateway 最近确认的供应商实际状态；判断是否可执行、是否已清理应以此字段为准。
+        lifecyclePhase:
+          type: string
+          enum: [PROVISIONING, RUNNING, SUSPENDING, SUSPENDED, RESUMING, TERMINATING, TERMINATED, FAILED, UNKNOWN]
+          description: 由 desiredState 与 observedState 推导的用户可读阶段，可区分 SUSPENDING/RESUMING/TERMINATING 过渡过程。
+        lastConfirmedState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: 最近一次有供应商或可靠事件证据确认的状态；observedState=UNKNOWN 时可用于故障排查，不能替代最新状态。
+        stateVersion:
+          type: integer
+          description: 每次有效状态变化递增的版本号，用于检测状态是否更新和防止乱序覆盖。
+        policy:
+          type: object
+          description: 创建时生效的实例生命周期策略。
+          properties:
+            resumeOnAccess:
+              type: boolean
+              description: 访问暂停实例时是否尝试自动恢复；必须由 offering 支持。
+        autoResume:
+          type: boolean
+          deprecated: true
+          description: 兼容旧客户端的字段；新客户端使用 policy.resumeOnAccess。
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: 创建时冻结的实际资源快照，用于执行能力和费用核对。
+        reservedUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: 当前滚动费用预留覆盖到的时间；不是实例保证存活时间，也不是自动终止时间。
+        totalCost:
+          type: string
+          description: 服务端已结算账期的累计实际费用（USD 十进制字符串）；不要用本地墙钟时间自行替代。
+        terminatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 实例首次确认进入 TERMINATED 的时间；尚未终止时为 null。
+        createdAt:
+          type: string
+          format: date-time
+          description: Gateway 创建实例记录并开始供应的时间。
+        updatedAt:
+          type: string
+          format: date-time
+          description: 实例记录最近一次状态、费用或审计摘要更新的时间。
+        offering:
+          allOf:
+            - $ref: '#/components/schemas/Offering'
+          description: 选中 offering 的完整快照；部分列表响应可能省略。
+        operations:
+          type: array
+          description: 最近的操作审计摘要；完整记录使用 audit?kind=operations 分页读取。
+          items: { $ref: '#/components/schemas/Operation' }
+        events:
+          type: array
+          description: 最近的状态事件；完整记录使用 audit?kind=events。
+          items: { $ref: '#/components/schemas/StateEvent' }
+        usageSegments:
+          type: array
+          description: 最近的用量段；终态验收时所有段应有 endsAt 且不处于 OPEN。
+          items: { $ref: '#/components/schemas/UsageSegment' }
+        billingPeriods:
+          type: array
+          description: 已返回的账期与结算明细；totalCost 应与 SETTLED 账期金额汇总一致。
+          items: { $ref: '#/components/schemas/BillingPeriod' }
+        auditCounts:
+          allOf:
+            - $ref: '#/components/schemas/AuditCounts'
+          description: 四类完整审计记录总数。
+      example:
+        id: 33333333-3333-4333-8333-333333333333
+        idempotencyKey: docs-create-example
+        offeringId: 11111111-1111-4111-8111-111111111111
+        desiredState: RUNNING
+        observedState: RUNNING
+        lifecyclePhase: RUNNING
+        lastConfirmedState: RUNNING
+        stateVersion: 1
+        policy: { resumeOnAccess: false }
+        resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+        totalCost: '0.00021371'
+        terminatedAt: null
+        createdAt: '2026-08-13T08:19:50.000Z'
+        updatedAt: '2026-08-13T08:20:00.000Z'
+        operations: []
+        events: []
+        usageSegments: []
+        billingPeriods: []
+        auditCounts:
+          operations: 2
+          events: 1
+          usageSegments: 1
+          billingPeriods: 2
+    CommandRequest:
+      type: object
+      description: 在 RUNNING 实例中执行一次非交互式 Shell 命令。
+      required: [command]
+      properties:
+        command:
+          type: string
+          minLength: 1
+          maxLength: 100000
+          description: 传给供应商 Shell 的完整命令。不要把 XAPI-Key 或其他密钥拼进命令或输出。
+        cwd:
+          type: string
+          maxLength: 4096
+          description: 命令工作目录；省略时使用 offering/适配器的默认工作区。
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: 仅对本次命令生效的环境变量映射；敏感值可能进入供应商进程环境，应谨慎使用。
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          default: 60
+          description: 远端命令最长执行秒数；超时会停止等待并记录失败，不会自动销毁整个 Sandbox。
+    CommandResult:
+      type: object
+      description: 远端进程结果。HTTP 201 表示调用成功返回，业务成功仍需检查 exitCode。
+      required: [exitCode, stdout, stderr]
+      properties:
+        exitCode:
+          type: integer
+          description: 远端进程退出码；0 通常表示命令成功，非零表示命令或脚本失败。
+        stdout:
+          type: string
+          description: 命令标准输出。可能为空，也可能因输出上限被截断。
+        stderr:
+          type: string
+          description: 命令标准错误。非空不一定失败，最终同时判断 exitCode。
+        truncated:
+          type: boolean
+          description: stdout 或 stderr 是否超过响应上限而被截断；为 true 时完整制品应写入文件再下载。
+      example:
+        exitCode: 0
+        stdout: "XAPI_SANDBOX_OK=42\n"
+        stderr: ''
+        truncated: false
+    FileWriteRequest:
+      type: object
+      description: 向 Sandbox 工作区写入文本或二进制内容。
+      required: [path, content, encoding]
+      properties:
+        path:
+          type: string
+          maxLength: 4096
+          description: 相对于工作区的目标路径；不能包含父目录跳转片段。
+        content:
+          type: string
+          description: utf8 时为原始文本；base64 时为不带 `data:*;base64,` 前缀的 Base64 字符串。
+        encoding:
+          type: string
+          enum: [utf8, base64]
+          description: content 的编码方式；二进制文件必须使用 base64。
+    FileWriteResult:
+      type: object
+      description: 供应商确认的写入结果；不同适配器可附加字节数、校验值等字段。
+      properties:
+        path:
+          type: string
+          description: 实际写入或规范化后的工作区路径。
+        written:
+          type: boolean
+          description: 供应商是否确认写入完成。
+        bytes:
+          type: integer
+          description: 实际写入字节数；供应商未返回时省略。
+      additionalProperties: true
+    FileResult:
+      type: object
+      description: 从 Sandbox 工作区读取的文件内容。
+      required: [path, content, encoding]
+      properties:
+        path:
+          type: string
+          description: 实际读取的工作区路径。
+        content:
+          type: string
+          description: 文件内容；encoding=utf8 时为文本，encoding=base64 时为无 data URI 前缀的 Base64。
+        encoding:
+          type: string
+          enum: [utf8, base64]
+          description: content 当前使用的编码。
+      example:
+        path: result.txt
+        content: XAPI_SANDBOX_OK=42
+        encoding: utf8
+    FileEntry:
+      type: object
+      description: 工作区目录枚举返回的一项；供应商可以附加时间戳、权限等字段。
+      properties:
+        name:
+          type: string
+          description: 文件或目录的基本名称。
+        path:
+          type: string
+          description: 相对于枚举根目录或工作区的路径。
+        type:
+          type: string
+          enum: [file, dir, other]
+          description: 条目类型：普通文件、目录或供应商特有类型。
+        size:
+          type: integer
+          description: 文件字节数；目录或未知大小时可能省略。
+      additionalProperties: true
+    FileListResult:
+      type: object
+      required: [entries]
+      description: 按 path 和 depth 枚举出的文件/目录条目集合。
+      properties:
+        entries:
+          type: array
+          description: 枚举结果；空数组表示路径存在但没有匹配条目，路径不存在通常返回错误。
+          items: { $ref: '#/components/schemas/FileEntry' }
+    PortResult:
+      type: object
+      description: 访问 Sandbox 内监听端口所需的临时外部地址和可选认证信息。
+      required: [port, url]
+      properties:
+        port:
+          type: integer
+          description: 映射的 Sandbox 内部端口。
+        url:
+          type: string
+          format: uri
+          description: 临时公网/代理访问地址；返回 URL 不保证应用、DNS 和 TLS 已就绪，应外部请求验证 marker。
+        token:
+          type: string
+          description: 访问该临时 URL 的短期令牌；属于敏感数据，不应写入日志或公开页面。
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: 访问 URL 时必须附带的 HTTP 请求头；可能包含敏感临时凭证。
+      example:
+        port: 8080
+        url: https://preview.example.invalid
+        token: REDACTED
+        headers: {}
+    ExtensionRequest:
+      type: object
+      description: 调用 offering 明确声明的供应商扩展。
+      properties:
+        input:
+          type: object
+          additionalProperties: true
+          description: 扩展专属输入；字段含义由该 extensionId 的 input schema/供应商文档定义。
+        idempotencyKey:
+          type: string
+          maxLength: 160
+          description: 扩展调用幂等键；可能改变状态或产生费用的扩展在重试时必须复用。
+    ExtensionResult:
+      type: object
+      description: 扩展专属输出。该对象没有跨供应商统一字段，必须按 extensionId 的 output schema 解释。
+      properties:
+        result:
+          type: object
+          additionalProperties: true
+          description: 供应商扩展返回的实际数据，例如连接信息、快照结果或挂载状态。
+      additionalProperties: true
+    HistoryPage:
+      type: object
+      description: Sandbox 实例历史分页结果及同一过滤条件下的状态汇总。
+      required: [items, total, page, pageSize, totalPages, stateCounts]
+      properties:
+        items:
+          type: array
+          description: 当前页实例记录，结构与 Sandbox 详情相同，但部分嵌套审计字段可能省略或裁剪。
+          items: { $ref: '#/components/schemas/Sandbox' }
+        total:
+          type: integer
+          description: 符合当前筛选条件的实例总数，不只是当前页数量。
+        page:
+          type: integer
+          description: 当前页码，从 1 开始。
+        pageSize:
+          type: integer
+          description: 本次请求采用的每页最大记录数。
+        totalPages:
+          type: integer
+          description: 按 total 和 pageSize 计算的总页数。
+        stateCounts:
+          type: object
+          additionalProperties: { type: integer }
+          description: 同一过滤条件下按 observedState 汇总的实例数量，用于检查 ACTIVE/终态分布。
+      example:
+        items: []
+        total: 33
+        page: 1
+        pageSize: 20
+        totalPages: 2
+        stateCounts:
+          PROVISIONING: 0
+          RUNNING: 0
+          SUSPENDED: 0
+          TERMINATED: 32
+          FAILED: 1
+    AuditPage:
+      type: object
+      description: 单一审计流的分页结果；items 结构由 kind 决定。
+      required: [kind, items, total, page, pageSize, totalPages]
+      properties:
+        kind:
+          type: string
+          enum: [operations, events, usageSegments, billingPeriods]
+          description: 当前页返回的审计类型，也决定 items 中每条记录的 Schema。
+        items:
+          type: array
+          description: |
+            审计记录：operations 对应 Operation；events 对应 StateEvent；
+            usageSegments 对应 UsageSegment；billingPeriods 对应 BillingPeriod。
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/Operation'
+              - $ref: '#/components/schemas/StateEvent'
+              - $ref: '#/components/schemas/UsageSegment'
+              - $ref: '#/components/schemas/BillingPeriod'
+        total:
+          type: integer
+          description: 该 kind 的审计记录总数。
+        page:
+          type: integer
+          description: 当前页码，从 1 开始。
+        pageSize:
+          type: integer
+          description: 本次请求采用的每页最大记录数。
+        totalPages:
+          type: integer
+          description: 该审计流的总页数。
+      example:
+        kind: operations
+        items:
+          - id: 22222222-2222-4222-8222-222222222222
+            type: TERMINATE
+            status: SUCCEEDED
+            expectedState: TERMINATED
+        total: 5
+        page: 1
+        pageSize: 100
+        totalPages: 1

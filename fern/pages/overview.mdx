@@ -1,74 +1,57 @@
 ---
-title: 概览
-subtitle: 一个 API 密钥,跨多家上游统一调用 Claude / GPT / Gemini 等主流模型。
+title: xAPI 产品文档
+subtitle: AI Gateway 与 Sandbox 是两个独立产品域，共用账户与 API Key，但解决不同问题。
 ---
 
-xAPI 是一个统一的 AI 网关。将客户端的 base URL 指向 `https://ai.xapi.to`,
-即可使用同一个密钥调用 Claude、GPT、Gemini、DeepSeek、Kimi 等主流模型。
-
-## 工作机制
-
-xAPI 在统一入口下聚合多家上游服务 —— 包括官方 API、经过验证的第三方中转,
-以及逆向访问通道。调用方无需关心后端实际命中的供应商,网关根据所选策略
-(`quality`、`speed`、`cost`),在每次请求时挑选当前健康且最匹配的上游执行。
-
-这套架构为调用方提供三项核心能力:
-
-<CardGroup cols={3}>
-  <Card title="单一接口" icon="layer-group">
-    切换模型仅需修改 `model` 字段,SDK、协议、业务代码均无需调整。
-    支持 Anthropic Messages 与 OpenAI Chat Completions 两套主流协议。
-  </Card>
-  <Card title="跨源价差" icon="arrow-trend-down">
-    同一模型在不同上游下报价可相差近一个数量级。`cost` 策略下,
-    网关自动路由至当前最便宜的健康上游。
-  </Card>
-  <Card title="自动故障转移" icon="shield-check">
-    上游 5xx / 限频 / 超时,网关在毫秒级切换至备用源继续完成请求。
-    路由轨迹通过响应头透明返回。
-  </Card>
-</CardGroup>
-
-## 调用方式
+xAPI 提供两类面向 AI 应用的基础设施。**AI Gateway** 负责模型推理与多上游路由；
+**Sandbox** 负责隔离计算、代码执行和实例生命周期。它们可以独立使用，也可以组合成
+“模型负责规划，Sandbox 负责执行”的 Agent 工作流。
 
 <CardGroup cols={2}>
-  <Card title="聚合路由(推荐)" href="/intro/quickstart" icon="route">
-    `https://ai.xapi.to`
-    Anthropic 协议 · 网关自动选源 · 支持 `quality / speed / cost` 三档策略
+  <Card title="AI Gateway" href="/ai/overview" icon="brain">
+    统一调用 Claude、GPT、Gemini、DeepSeek、Kimi 等模型。兼容 Anthropic 与
+    OpenAI 协议，提供多上游路由、流式响应、故障转移和 Token 计费。
   </Card>
-  <Card title="直连上游" href="/reference/api" icon="server">
-    `https://{host}.p.xapi.to/v1`
-    OpenAI / Anthropic / Gemini 原生协议 · 显式指定上游
+  <Card title="Sandbox" href="/sandbox/overview" icon="terminal">
+    创建隔离的临时云环境，执行命令、读写文件、暴露端口、运行 GPU 作业，
+    并记录实例、操作、用量和结算历史。
   </Card>
 </CardGroup>
 
-## 适用场景
+## 两个产品域的边界
 
-- **使用 Claude Code、Codex、Cursor、Cline 等开发工具的工程师** —— 单密钥多源备份,
-  规避封号、限频与价格波动风险
-- **运行大规模 AI 工作流的团队** —— `cost` 策略下显著降低 token 成本,
-  同时保留官方源级别的稳定性
-- **多模型应用** —— 单套 SDK 统一调用多家模型,
-  不被任何单一供应商的发布节奏与定价策略绑定
+| | AI Gateway | Sandbox |
+| --- | --- | --- |
+| 核心目标 | 调用和路由大模型 | 运行代码和工作负载 |
+| 主要入口 | `https://ai.xapi.to` | `https://sandbox.xapi.to` |
+| 资源单位 | 模型请求、Token | 实例、CPU、内存、GPU、运行时间 |
+| 生命周期 | 单次 HTTP / SSE / WebSocket 会话 | 报价、创建、执行、暂停、恢复、销毁 |
+| 主要日志 | 模型、Token、延迟、费用、路由 | 操作、事件、用量段、账期、实例状态 |
+| 常见客户端 | OpenAI/Anthropic SDK、IDE、AI 应用 | xAPI CLI、Agent Tool、OpenAI Agents Sandbox |
+
+<Note>
+  共用 API Key 不代表共用 API。调用模型时使用 AI Gateway；需要 Shell、文件系统、
+  Web 预览或 GPU 时使用 Sandbox。
+</Note>
+
+## 选择你的入口
+
+<CardGroup cols={2}>
+  <Card title="开始调用 AI 模型" href="/ai/quickstart" icon="bolt">
+    通过 curl、OpenAI SDK 或 Anthropic SDK 完成首次模型请求。
+  </Card>
+  <Card title="开始运行 Sandbox" href="/sandbox/cli" icon="play">
+    通过 CLI 自动完成报价、创建、执行、审计和销毁。
+  </Card>
+  <Card title="配置开发工具" href="/ai/integrations/claude-code" icon="code">
+    接入 Claude Code、Codex、Cursor、Cline、OpenClaw 等客户端。
+  </Card>
+  <Card title="构建 AI + Sandbox Agent" href="/sandbox/openai-agents" icon="robot">
+    使用 ai.xapi.to 的 DeepSeek 规划，并由 xAPI Sandbox 执行工具调用。
+  </Card>
+</CardGroup>
 
 <Tip>
-  新用户可在 [xapi.to](https://xapi.to) 控制台一键创建 API Key 并领取测试额度,
-  无需信用卡。
+  新用户可在 [xapi.to](https://xapi.to) 控制台创建 API Key。生产与测试环境的
+  域名、日志位置和验收方法请参阅 [测试环境与日志](/sandbox/testing)。
 </Tip>
-
-## 进一步阅读
-
-<CardGroup cols={2}>
-  <Card title="快速开始" href="/intro/quickstart" icon="rocket">
-    一条 curl 完成首次调用
-  </Card>
-  <Card title="Claude Code 接入" href="/integrations/claude-code" icon="terminal">
-    Anthropic 官方 CLI · 推荐
-  </Card>
-  <Card title="模型与价格" href="/concepts/models" icon="coins">
-    实时定价 · 跨上游对比表
-  </Card>
-  <Card title="设计原则" href="/concepts/principles" icon="diagram-project">
-    了解架构选择背后的考量
-  </Card>
-</CardGroup>

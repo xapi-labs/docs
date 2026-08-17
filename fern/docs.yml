@@ -97,6 +97,7 @@ navigation:
         playground:
           environments:
             - Test
+            - Production
         layout:
           - discovery
           - lifecycle

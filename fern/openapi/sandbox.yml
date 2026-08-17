@@ -66,7 +66,10 @@ paths:
     get:
       operationId: listEnvironments
       summary: 列出预置环境
-      description: 返回可用于 requirements.environmentId 的环境预设。
+      description: |
+        汇总当前可用 Offering 明确声明的稳定运行时环境，用于 requirements.environmentId。
+        空数组表示当前没有可售 Offering 发布环境预置，不是服务异常。此时报价/创建应省略
+        environmentId，改用 capabilities、资源与区域约束。
       tags: [Discovery]
       security: []
       x-fern-examples:

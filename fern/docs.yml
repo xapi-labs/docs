@@ -96,8 +96,8 @@ navigation:
         display-errors: true
         playground:
           environments:
-            - Test
             - Production
+            - Test
         layout:
           - discovery
           - lifecycle

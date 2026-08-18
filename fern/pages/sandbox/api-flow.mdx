@@ -1,6 +1,6 @@
 ---
 title: REST API 调用流程
-subtitle: 从测试报价到创建、执行、审计和销毁；每一步都能用 curl 或 API Explorer 验证。
+subtitle: 从报价到创建、执行、审计和销毁；默认使用生产 Gateway，每一步都能用 curl 或 API Explorer 验证。
 ---
 
 Sandbox 是有生命周期的计费资源，不是普通的一次性 API。一个完整调用必须包含
@@ -27,8 +27,8 @@ Sandbox 是有生命周期的计费资源，不是普通的一次性 API。一�
 
 | 环境 | Base URL | 用途 |
 | --- | --- | --- |
-| 测试 | `https://sandbox.test.xapi.to` | 文档试调、集成测试、发布前验收 |
-| 生产 | `https://sandbox.xapi.to` | 正式工作负载 |
+| 生产（默认） | `https://sandbox.xapi.to` | 正式工作负载、文档 Explorer 与生成代码默认目标 |
+| 测试 | `https://sandbox.test.xapi.to` | 集成测试、发布前验收；需要显式切换 |
 
 所有需要账户身份的接口接受：
 
@@ -65,12 +65,15 @@ XAPI-Key: sk-xapi-...
     HTTP 成功且响应中的 `exitCode=0`。
   </Step>
   <Step title="检查审计">
-    调用 `GET /v1/sandboxes/{id}/audit`，分别检查 `operations`、`events`、
-    `usageSegments` 和 `billingPeriods`。
+    运行中可先读取审计定位问题，但此时 usage segment 和 billing period 通常仍开放，
+    不能作为最终结算证据。
   </Step>
   <Step title="销毁并确认终态">
     在 `finally` 或 shell `trap` 中调用 `POST /v1/sandboxes/{id}/terminate`，随后继续轮询，
-    直到 `observedState=TERMINATED` 或 provider-terminal `FAILED`。最后核对 `totalCost`。
+    直到 `observedState=TERMINATED` 或 provider-terminal `FAILED`。进入终态后重新读取
+    `operations`、`events`、`usageSegments` 和 `billingPeriods`，核对 TERMINATE 操作、
+    终态事件、已关闭用量段、已结算账期和服务端 `totalCost`；最后用
+    `sandbox-history?state=ACTIVE` 确认本次实例没有残留。
   </Step>
 </Steps>
 
@@ -80,8 +83,9 @@ XAPI-Key: sk-xapi-...
 参数、发送 Test 请求并查看完整响应。需要语言代码或完整 Schema 时再进入**逐接口 API Reference**。
 
 <Steps>
-  <Step title="选择 Test 环境并鉴权">
-    环境保持 `Test`；在鉴权框输入测试账户的 `XAPI-Key`。不要把 Key 放进 URL 或请求体。
+  <Step title="确认 Production 环境并鉴权">
+    页面默认选择 `Production`；在鉴权框输入生产账户的 `XAPI-Key`。需要验收测试时再显式
+    切换到 `Test` 并改用测试账户 Key。不要把 Key 放进 URL 或请求体。
   </Step>
   <Step title="报价并保存 quoteId">
     调用**获取 Sandbox 报价**。它不会创建资源，但会验证鉴权、预算和规格选择。
@@ -110,7 +114,8 @@ XAPI-Key: sk-xapi-...
 
 ## 一键测试脚本
 
-下面的脚本只连接测试 Gateway，验证 quote → create → wait → exec → audit → terminate。
+下面的脚本默认连接生产 Gateway，验证 quote → create → wait → exec → audit → terminate。
+需要测试环境时，显式把 `base_url` 改为 `https://sandbox.test.xapi.to` 并使用测试 Key。
 它要求本机安装 `curl` 和 `jq`，并通过 `trap` 尽力清理实例。
 
 <Accordion title="展开完整 curl 生命周期脚本">
@@ -119,8 +124,8 @@ XAPI-Key: sk-xapi-...
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_url="https://sandbox.test.xapi.to"
-read -rsp "XAPI test key: " XAPI_KEY
+base_url="https://sandbox.xapi.to"
+read -rsp "XAPI production key: " XAPI_KEY
 printf '\n'
 
 instance_id=""
@@ -174,11 +179,6 @@ exec_json="$(curl -fsS -X POST "$base_url/v1/sandboxes/$instance_id/commands" \
   -d '{"command":"python3 -c \"print(6 * 7)\"","timeoutSeconds":60}')"
 jq -e '.exitCode == 0 and (.stdout | contains("42"))' <<<"$exec_json" >/dev/null
 
-for kind in operations events usageSegments billingPeriods; do
-  curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=$kind&page=1&pageSize=100" \
-    -H "XAPI-Key: $XAPI_KEY" | jq '{kind,total}'
-done
-
 cleanup
 trap - EXIT INT TERM
 
@@ -191,6 +191,37 @@ for _ in $(seq 1 90); do
 done
 jq '{id,observedState,totalCost,auditCounts}' <<<"$final_json"
 [[ "$final_state" == "TERMINATED" || "$final_state" == "FAILED" ]]
+
+# 终态之后再读取审计；此前的用量段/账期仍可能是开放状态，不能作为结算证据。
+for _ in $(seq 1 30); do
+  operations="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=operations&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  events="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=events&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  usage="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=usageSegments&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  billing="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=billingPeriods&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+
+  if jq -e 'any(.items[]; .type == "TERMINATE" and .status == "SUCCEEDED")' <<<"$operations" >/dev/null \
+    && jq -e 'any(.items[]; .currentState == "TERMINATED" or .currentState == "FAILED")' <<<"$events" >/dev/null \
+    && jq -e '(.total > 0) and all(.items[]; .endsAt != null and .status != "OPEN")' <<<"$usage" >/dev/null \
+    && jq -e '(.total > 0) and all(.items[]; .endedAt != null and .status != "RESERVED")' <<<"$billing" >/dev/null; then
+    break
+  fi
+  sleep 2
+done
+
+jq -e 'any(.items[]; .type == "TERMINATE" and .status == "SUCCEEDED")' <<<"$operations" >/dev/null
+jq -e 'any(.items[]; .currentState == "TERMINATED" or .currentState == "FAILED")' <<<"$events" >/dev/null
+jq -e '(.total > 0) and all(.items[]; .endsAt != null and .status != "OPEN")' <<<"$usage" >/dev/null
+jq -e '(.total > 0) and all(.items[]; .endedAt != null and .status != "RESERVED")' <<<"$billing" >/dev/null
+
+active_json="$(curl -fsS "$base_url/v1/sandbox-history?state=ACTIVE&page=1&pageSize=100" \
+  -H "XAPI-Key: $XAPI_KEY")"
+jq -e --arg id "$instance_id" 'all(.items[]; .id != $id)' <<<"$active_json" >/dev/null
+printf 'audit and cleanup verified for %s; totalCost=%s\n' \
+  "$instance_id" "$(jq -r '.totalCost' <<<"$final_json")"
 ```
 
 </Accordion>
@@ -200,7 +231,7 @@ jq '{id,observedState,totalCost,auditCounts}' <<<"$final_json"
 如果只是验证 Sandbox 是否能执行命令，优先使用 CLI。它已封装报价、等待和 finally 清理：
 
 ```bash
-XAPI_SANDBOX_HOST=sandbox.test.xapi.to \
+XAPI_SANDBOX_HOST=sandbox.xapi.to \
 npx xapi-to sandbox run \
   --capabilities exec,files \
   --max-hourly-usd 0.20 \

@@ -40,7 +40,8 @@ npm install @openai/agents xapi-to zod
 ```bash
 cd /path/to/xapi-cli
 npm install
-export XAPI_SANDBOX_KEY='sk-sandbox-test-...'
+export XAPI_SANDBOX_KEY='sk-sandbox-production-...'
+export XAPI_SANDBOX_HOST='sandbox.xapi.to'
 export XAPI_AI_KEY='sk-ai-production-...'
 npm run example:sandbox:openai
 ```
@@ -52,26 +53,26 @@ npm run example:sandbox:openai
 import { XapiAgentsSandboxClient } from '../src/openai-sandbox-client.ts';
 ```
 
-默认配置如下；均可通过环境变量覆盖：
+本文档示例使用以下配置；均可通过环境变量覆盖：
 
 | 配置 | 默认值 | 环境变量 |
 | --- | --- | --- |
 | 模型 Gateway | `https://ai.xapi.to/v1` | 固定为当前 OpenAI-compatible 入口 |
 | 模型凭据 | 无 | `XAPI_AI_KEY` |
 | 模型 | `deepseek-v4-pro` | `XAPI_MODEL` |
-| Sandbox Gateway | `sandbox.test.xapi.to` | `XAPI_SANDBOX_HOST` |
+| Sandbox Gateway | `sandbox.xapi.to` | `XAPI_SANDBOX_HOST` |
 | Sandbox 凭据 | 无 | `XAPI_SANDBOX_KEY` |
 | Sandbox 供应商 | `daytona` | `XAPI_SANDBOX_PROVIDER` |
 | 价格上限 | `$0.20/小时` | `XAPI_SANDBOX_MAX_HOURLY_USD` |
 
 ```bash
-XAPI_SANDBOX_HOST=sandbox.test.xapi.to \
+XAPI_SANDBOX_HOST=sandbox.xapi.to \
 XAPI_SANDBOX_PROVIDER=daytona \
 XAPI_MODEL=deepseek-v4-pro \
 npm run example:sandbox:openai
 ```
 
-这个混合环境可能需要两把 Key：`XAPI_SANDBOX_KEY` 只访问 Sandbox Gateway，
+这个双 Gateway 示例可能需要两把 Key：`XAPI_SANDBOX_KEY` 只访问 Sandbox Gateway，
 `XAPI_AI_KEY` 只访问正式 `ai.xapi.to`。如果同一把正式 xAPI Key 对两个 Gateway 都有效，
 可以让二者都回退到 `XAPI_KEY` → `XAPI_API_KEY` → CLI 配置文件。命令不会接受
 `--api-key`，也不会把密钥写入 prompt、Sandbox、报告或命令行参数。成功报告应包含：

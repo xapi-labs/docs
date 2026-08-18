@@ -97,6 +97,7 @@ navigation:
         playground:
           environments:
             - Test
+            - Production
         layout:
           - discovery
           - lifecycle
@@ -141,3 +142,37 @@ layout:
   sidebar-width: 280px
 
 default-language: typescript
+
+redirects:
+  - source: /concepts/models
+    destination: /ai/models
+  - source: /concepts/principles
+    destination: /ai/principles
+  - source: /integrations/chatbox
+    destination: /ai/integrations/chatbox
+  - source: /integrations/claude-code
+    destination: /ai/integrations/claude-code
+  - source: /integrations/cline
+    destination: /ai/integrations/cline
+  - source: /integrations/codex
+    destination: /ai/integrations/codex
+  - source: /integrations/continue-dev
+    destination: /ai/integrations/continue-dev
+  - source: /integrations/cursor
+    destination: /ai/integrations/cursor
+  - source: /integrations/hermes
+    destination: /ai/integrations/hermes
+  - source: /integrations/openclaw
+    destination: /ai/integrations/openclaw
+  - source: /integrations/windsurf
+    destination: /ai/integrations/windsurf
+  - source: /intro/overview
+    destination: /home/overview
+  - source: /intro/quickstart
+    destination: /ai/quickstart
+  - source: /reference/api
+    destination: /ai/api
+  - source: /reference/billing
+    destination: /ai/billing
+  - source: /reference/faq
+    destination: /help/faq

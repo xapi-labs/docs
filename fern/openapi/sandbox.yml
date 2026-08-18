@@ -8,12 +8,12 @@ info:
     测试环境也会申请真实供应商资源并产生费用。创建实例后必须调用 terminate，
     并等待实例进入 TERMINATED 或 FAILED。
 servers:
-  - url: https://sandbox.test.xapi.to
-    x-fern-server-name: Test
-    description: 测试 Gateway；连接真实供应商，适合验收和集成测试。
   - url: https://sandbox.xapi.to
     x-fern-server-name: Production
-    description: 生产 Gateway。
+    description: 生产 Gateway；文档与生成代码的默认环境。
+  - url: https://sandbox.test.xapi.to
+    x-fern-server-name: Test
+    description: 测试 Gateway；连接真实供应商，仅在验收和集成测试时显式选择。
 tags:
   - name: Discovery
     x-displayName: 发现与报价
@@ -66,11 +66,17 @@ paths:
     get:
       operationId: listEnvironments
       summary: 列出预置环境
-      description: 返回可用于 requirements.environmentId 的环境预设。
+      description: |
+        汇总当前可用 Offering 明确声明的稳定运行时环境，用于 requirements.environmentId。
+        空数组表示当前没有可售 Offering 发布环境预置，不是服务异常。此时报价/创建应省略
+        environmentId，改用 capabilities、资源与区域约束。
       tags: [Discovery]
       security: []
       x-fern-examples:
-        - name: Python 环境
+        - name: 当前没有环境预置
+          response:
+            body: []
+        - name: 服务商发布 Python 环境后
           response:
             body:
               - id: python-3.12
@@ -145,16 +151,20 @@ paths:
   /v1/sandboxes:
     get:
       operationId: listSandboxes
-      summary: 列出当前实例
-      description: 返回当前账户拥有的 Sandbox。清理验收时应确认没有本次测试遗留的活动实例。
+      summary: 列出账户实例快照
+      description: |
+        返回当前账户拥有的全部 Sandbox 快照，包括活动实例和 `TERMINATED` / `FAILED`
+        终态记录。该接口没有分页或状态过滤，适合快速定位已知实例，但返回非空不表示仍有
+        资源在运行。清理门禁请调用 `GET /v1/sandbox-history?state=ACTIVE`，并确认结果中
+        不包含本次实例。
       tags: [Lifecycle]
       x-fern-examples:
-        - name: 当前无活动实例
+        - name: 账户暂无实例记录
           response:
             body: []
       responses:
         '200':
-          description: 当前实例列表
+          description: 账户全部实例快照（包含终态记录）
           content:
             application/json:
               schema:
@@ -429,7 +439,10 @@ paths:
     post:
       operationId: executeCommand
       summary: 执行 Shell 命令
-      description: 需要实例为 RUNNING，且 offering 声明 exec 能力。非零 exitCode 是远端命令失败，不等同于 HTTP 失败。
+      description: |
+        需要实例为 RUNNING，且 offering 声明 exec 能力。前台命令的非零 exitCode 是远端命令失败，
+        不等同于 HTTP 失败。需要启动 Web 服务等长驻进程时可传 background=true，但必须先确认
+        offering.capabilities.backgroundExec=true；此时响应表示后台会话已接受，不代表进程已经监听端口。
       tags: [Execution]
       x-fern-examples:
         - name: 验证 Shell 输出
@@ -443,6 +456,20 @@ paths:
               stdout: "XAPI_SANDBOX_OK=42\n"
               stderr: ''
               truncated: false
+        - name: 启动后台 Web 服务
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request:
+            command: "python3 -m http.server 25319 --bind 0.0.0.0"
+            background: true
+          response:
+            body:
+              exitCode: 0
+              stdout: ''
+              stderr: ''
+              truncated: false
+              background:
+                sessionId: xapi-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+                commandId: aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
       parameters:
         - $ref: '#/components/parameters/SandboxId'
       requestBody:
@@ -864,8 +891,8 @@ components:
         capabilities:
           type: array
           description: |
-            必须具备的能力名称。常用值：exec=执行命令、files=文件读写、ports=端口访问、
-            snapshot=快照；扩展能力以实时 offering 声明为准。
+            必须具备的能力名称。常用值：exec=执行命令、backgroundExec=后台长驻命令、
+            files=文件读写、ports=端口访问、snapshot=快照；扩展能力以实时 offering 声明为准。
           maxItems: 50
           uniqueItems: true
           items: { type: string, maxLength: 160 }
@@ -1076,6 +1103,9 @@ components:
         exec:
           type: boolean
           description: 是否支持执行 Shell 命令。
+        backgroundExec:
+          type: boolean
+          description: 是否支持 background=true，在 HTTP 响应后继续保留供应商托管的后台命令会话；启动 Web 服务前应检查此字段。
         files:
           type: boolean
           description: 是否支持文件读取、写入和目录枚举。
@@ -1712,6 +1742,13 @@ components:
           maximum: 3600
           default: 60
           description: 远端命令最长执行秒数；超时会停止等待并记录失败，不会自动销毁整个 Sandbox。
+        background:
+          type: boolean
+          default: false
+          description: |
+            true=在供应商托管的异步会话中启动命令并立即返回，适合监听端口的 Web 服务；
+            仅当 offering.capabilities.backgroundExec=true 时可用。不要用 shell 的 nohup/& 替代：
+            部分供应商会在前台 exec 请求结束时回收该命令会话及其子进程。
     CommandResult:
       type: object
       description: 远端进程结果。HTTP 201 表示调用成功返回，业务成功仍需检查 exitCode。
@@ -1719,7 +1756,7 @@ components:
       properties:
         exitCode:
           type: integer
-          description: 远端进程退出码；0 通常表示命令成功，非零表示命令或脚本失败。
+          description: 前台命令的远端进程退出码。background=true 时 0 仅表示后台会话已接受，不能证明进程已就绪或最终成功。
         stdout:
           type: string
           description: 命令标准输出。可能为空，也可能因输出上限被截断。
@@ -1729,6 +1766,17 @@ components:
         truncated:
           type: boolean
           description: stdout 或 stderr 是否超过响应上限而被截断；为 true 时完整制品应写入文件再下载。
+        background:
+          type: object
+          description: 仅 background=true 时返回的供应商托管会话标识；用于审计和问题定位，不是公开访问凭证。
+          required: [sessionId, commandId]
+          properties:
+            sessionId:
+              type: string
+              description: xAPI 在供应商内创建并保留到 Sandbox 销毁的命令会话 ID。
+            commandId:
+              type: string
+              description: 供应商返回的异步命令 ID。
       example:
         exitCode: 0
         stdout: "XAPI_SANDBOX_OK=42\n"

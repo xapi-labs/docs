@@ -1,6 +1,6 @@
 ---
 title: 全部 REST API 与测试
-subtitle: 17 个 Sandbox 接口集中在一个页面，可切换 Test / Production Gateway 后直接调用。
+subtitle: 17 个 Sandbox 接口集中在一个页面，默认使用 Production，也可切换 Test Gateway。
 ---
 
 <Warning>
@@ -24,8 +24,9 @@ subtitle: 17 个 Sandbox 接口集中在一个页面，可切换 Test / Producti
 </CardGroup>
 
 每个组件都包含方法、地址、路径参数、查询参数、请求体和发送按钮。使用接口上方的
-**Test / Production** 标签，可在 `https://sandbox.test.xapi.to` 与
-`https://sandbox.xapi.to` 之间切换；任一接口切换后，本页其他接口会同步到相同环境。
+**Production / Test** 标签，可在 `https://sandbox.xapi.to` 与
+`https://sandbox.test.xapi.to` 之间切换；默认选择 Production，任一接口切换后，
+本页其他接口会同步到相同环境。
 需要身份的接口在组件内填写与所选环境对应的 `XAPI-Key`，测试 Key 与生产 Key 不要混用。
 
 ## Sandbox API 端到端测试流程
@@ -66,8 +67,8 @@ subtitle: 17 个 Sandbox 接口集中在一个页面，可切换 Test / Producti
 
 <Tip>
   API Explorer 里的 Key 只填在凭证输入框，不要写入请求 body、metadata、截图或文档源码。
-  发请求前再次核对 URL：验收使用 `https://sandbox.test.xapi.to`，正式工作负载才选择
-  `https://sandbox.xapi.to`。两个环境都会申请真实供应商资源并产生实际费用。
+  发请求前再次核对 URL：页面默认使用 `https://sandbox.xapi.to`；只有明确执行测试验收时，
+  才切换到 `https://sandbox.test.xapi.to`。两个环境都会申请真实供应商资源并产生实际费用。
 </Tip>
 
 ### 本地新版 CLI 一键验收
@@ -80,7 +81,7 @@ cd /Users/daxiongya/Desktop/Projects/web3/x402/bsc/xapi-workspace/xapi-cli
 npm run build
 
 node dist/index.js sandbox run \
-  --host sandbox.test.xapi.to \
+  --host sandbox.xapi.to \
   --capabilities exec,files \
   --max-hourly-usd 0.20 \
   --command 'printf "MANUAL_TEST_OK=42\n"' \
@@ -97,11 +98,11 @@ node dist/index.js sandbox run \
 无副作用、无需鉴权。用于查看当前资源、能力、生命周期和价格。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/offerings" defaultEnvironment="Test" />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/offerings" defaultEnvironment="Production" />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/offerings" defaultEnvironment="Test" />
   </Tab>
 </Tabs>
 
@@ -112,11 +113,11 @@ node dist/index.js sandbox run \
 不是接口故障；此时省略 `environmentId`，改用 `capabilities`、CPU、内存、GPU 与区域选型。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/environments" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/environments" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/environments" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -125,11 +126,11 @@ node dist/index.js sandbox run \
 需要鉴权，但不会创建实例。先设置 `maxEstimatedHourlyUsd`，保存返回的 `quoteId`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/quotes" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/quotes" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/quotes" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -144,11 +145,11 @@ node dist/index.js sandbox run \
 返回账户全部实例，包括终态记录。零残留检查请使用下方历史接口的 `state=ACTIVE`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandboxes" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandboxes" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -157,11 +158,11 @@ node dist/index.js sandbox run \
 返回 `202` 只代表请求已接受。重试同一创建必须复用 `idempotencyKey`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -170,11 +171,11 @@ node dist/index.js sandbox run \
 轮询到 `observedState=RUNNING` 后再执行命令或文件操作。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -183,11 +184,11 @@ node dist/index.js sandbox run \
 仅在 offering 声明支持 suspension 时使用。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/suspend" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/suspend" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/suspend" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -196,11 +197,11 @@ node dist/index.js sandbox run \
 恢复后继续查询详情，直到实例重新进入 `RUNNING`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/resume" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/resume" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/resume" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -209,11 +210,11 @@ node dist/index.js sandbox run \
 放入 `finally`，提交后继续等待 `TERMINATED` 或供应商终态 `FAILED`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/terminate" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/terminate" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/terminate" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -228,44 +229,44 @@ HTTP 成功并不等于命令成功；还必须检查 `exitCode=0`。
 普通命令不要开启。后台响应只证明会话已接受，仍需轮询应用健康地址确认服务真正就绪。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/commands" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/commands" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/commands" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
 ### 写入文件
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/files" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/files" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/files" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
 ### 读取文件
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
 ### 列出文件
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files/list" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files/list" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files/list" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -276,11 +277,11 @@ HTTP 成功并不等于命令成功；还必须检查 `exitCode=0`。
 不能把“拿到 URL”当成应用就绪。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/ports/{port}" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/ports/{port}" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/ports/{port}" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -289,11 +290,11 @@ HTTP 成功并不等于命令成功；还必须检查 `exitCode=0`。
 只调用 offering 明确声明的扩展，例如 `runpod.connection_info`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/extensions/{extensionId}" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/extensions/{extensionId}" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/extensions/{extensionId}" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -304,11 +305,11 @@ HTTP 成功并不等于命令成功；还必须检查 `exitCode=0`。
 按状态、实例 ID、provider 和时间范围检索，用于清理门禁与费用核对。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandbox-history" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandbox-history" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandbox-history" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 
@@ -317,11 +318,11 @@ HTTP 成功并不等于命令成功；还必须检查 `exitCode=0`。
 分别选择 `operations`、`events`、`usageSegments` 或 `billingPeriods`。
 
 <Tabs>
-  <Tab title="Test" language="test">
-    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/audit" defaultEnvironment="Test" collapsed />
-  </Tab>
   <Tab title="Production" language="production">
     <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/audit" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/audit" defaultEnvironment="Test" collapsed />
   </Tab>
 </Tabs>
 

@@ -8,12 +8,12 @@ info:
     测试环境也会申请真实供应商资源并产生费用。创建实例后必须调用 terminate，
     并等待实例进入 TERMINATED 或 FAILED。
 servers:
-  - url: https://sandbox.test.xapi.to
-    x-fern-server-name: Test
-    description: 测试 Gateway；连接真实供应商，适合验收和集成测试。
   - url: https://sandbox.xapi.to
     x-fern-server-name: Production
-    description: 生产 Gateway。
+    description: 生产 Gateway；文档与生成代码的默认环境。
+  - url: https://sandbox.test.xapi.to
+    x-fern-server-name: Test
+    description: 测试 Gateway；连接真实供应商，仅在验收和集成测试时显式选择。
 tags:
   - name: Discovery
     x-displayName: 发现与报价
@@ -73,7 +73,10 @@ paths:
       tags: [Discovery]
       security: []
       x-fern-examples:
-        - name: Python 环境
+        - name: 当前没有环境预置
+          response:
+            body: []
+        - name: 服务商发布 Python 环境后
           response:
             body:
               - id: python-3.12

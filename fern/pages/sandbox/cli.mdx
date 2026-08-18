@@ -95,8 +95,9 @@ CLI 源码仓库提供一个不依赖预先实例 ID 的独立演示脚本。它
 cd xapi-cli
 bun install --frozen-lockfile
 
-# 测试 Sandbox Key；仅发送给 sandbox.test.xapi.to
+# 生产 Sandbox Key；默认仅发送给 sandbox.xapi.to 及其受控供应商子域
 read -s XAPI_SANDBOX_KEY && export XAPI_SANDBOX_KEY
+export XAPI_SANDBOX_HOST=sandbox.xapi.to
 
 # OpenAI/DeepSeek 场景还需要正式 ai.xapi.to Key
 read -s XAPI_AI_KEY && export XAPI_AI_KEY
@@ -109,11 +110,12 @@ npm run demo:sandbox -- api
 npm run demo:sandbox -- cli
 npm run demo:sandbox -- openai
 
-unset XAPI_SANDBOX_KEY XAPI_AI_KEY
+unset XAPI_SANDBOX_KEY XAPI_SANDBOX_HOST XAPI_AI_KEY
 ```
 
-默认目标为测试 Sandbox。直接 API 和 CLI 场景使用 `XAPI_SANDBOX_KEY`；OpenAI 场景的
-计算层仍使用该 Key，但模型层改用 `XAPI_AI_KEY` 调用正式 `ai.xapi.to`。最终报告分别显示
+默认目标为生产 Sandbox。直接 API 和 CLI 场景使用 `XAPI_SANDBOX_KEY`；OpenAI 场景的
+计算层仍使用该生产 Key，模型层使用 `XAPI_AI_KEY` 调用正式 `ai.xapi.to`。需要测试
+Sandbox 时必须显式设置 `XAPI_SANDBOX_HOST=sandbox.test.xapi.to` 并改用测试 Key。最终报告分别显示
 两项凭据的脱敏 preview 和来源。每套流程自行报价、创建、验证并终止实例；最终 JSON
 验证 marker、`TERMINATED`、操作成功、用量/账单结清、服务端费用和账户活动实例为零。
 
@@ -155,8 +157,11 @@ npx xapi-to sandbox quote \
   请使用 requirements 参数触发受上限约束的报价，或者使用已经核对过价格的 `quoteId`。
 </Warning>
 
-固定供应商会派生受控主机，例如 `daytona.sandbox.test.xapi.to`。CLI 只会向
-`*.xapi.to` 或显式 localhost 发送 Sandbox 密钥，不接受任意供应商 URL。
+固定供应商会派生受控主机，例如生产环境的 `daytona-sandbox.sandbox.xapi.to`。CLI 只会向
+`*.xapi.to` 或显式 localhost 发送 Sandbox 密钥，不接受任意供应商 URL。生产环境中
+`--provider daytona` / `e2b` 会分别解析到已部署的
+`daytona-sandbox.sandbox.xapi.to` / `e2b-sandbox.sandbox.xapi.to`；测试环境仍使用
+`daytona.sandbox.test.xapi.to` / `e2b.sandbox.test.xapi.to`。
 
 ## 多步骤生命周期
 
@@ -224,17 +229,25 @@ CLI 会以 base64 传输本地二进制文件；`--output` 使用“只创建新
 
 ## Web 预览与端口
 
-实例内服务监听 `0.0.0.0` 后，可取得临时公网地址：
+先从 Offering 确认同时支持 `backgroundExec` 与 `ports`。实例内服务监听 `0.0.0.0`
+后，可取得临时公网地址：
 
 ```bash
-npx xapi-to sandbox exec <id> --command \
-  'nohup python3 -m http.server 25319 >/tmp/server.log 2>&1 &'
+npx xapi-to sandbox create \
+  --provider daytona \
+  --capabilities exec,backgroundExec,ports \
+  --wait
 
-npx xapi-to sandbox port <id> 25319
+npx xapi-to sandbox exec <id> --provider daytona --background --command \
+  'python3 -m http.server 25319 --bind 0.0.0.0'
+
+npx xapi-to sandbox port <id> 25319 --provider daytona
 ```
 
-取得 URL 后应从外部请求并验证预期 marker。返回 URL 不等于 DNS、TLS 和应用已经就绪；
-使用有上限的重试，失败后仍要销毁实例。销毁后临时 URL 会失效。
+不要用 `nohup ... &` 模拟标准后台能力：部分供应商会在前台 exec 会话结束时回收子进程。
+后台命令返回 session/command ID 只表示已接受；取得 URL 后仍应带上端口响应中的
+`headers`（如有），从外部请求并验证预期 marker。返回 URL 不等于 DNS、TLS 和应用已经
+就绪；使用有上限的重试，失败后仍要销毁实例。销毁后临时 URL 会失效。
 
 ## 挂起与恢复
 

@@ -3,6 +3,11 @@ title: Sandbox CLI 使用指南
 subtitle: 使用 xapi-to 完成报价、创建、执行、文件、端口、生命周期、历史与审计。
 ---
 
+<Info>
+  CLI 是 Sandbox 基础设施的薄客户端：它调用报价、生命周期、执行、文件、端口、扩展和审计
+  API。CLI 不实现 Agent loop、记忆、DAG 或多 Agent 调度；文中的 Agent/CI 场景只是调用示例。
+</Info>
+
 `xapi-to sandbox` 为 Agent 和自动化脚本提供机器可读的 Sandbox 生命周期命令。
 普通输出默认为 JSON，可使用 `--format pretty` 或 `--format table` 提高可读性。
 
@@ -146,6 +151,7 @@ npx xapi-to sandbox quote \
 | `--cpu / --memory / --volume` | 最低 CPU、内存 GiB、卷 GiB |
 | `--gpu-count / --gpu-model` | GPU 数量与型号 |
 | `--regions a,b` | 允许区域 |
+| `--min-runtime 24h` | 最短连续运行要求；筛选生命周期声明，不代表宿主绝不重启 |
 | `--requirements '<json>'` | 完整 requirements 对象 |
 | `--max-hourly-usd` | 创建前硬性小时价格上限 |
 

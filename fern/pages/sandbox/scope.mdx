@@ -1,0 +1,62 @@
+---
+title: 产品边界与能力模型
+subtitle: xAPI 统一 Sandbox 资源与能力；任务规划、记忆和 Agent 编排留在应用层。
+---
+
+xAPI Sandbox 是 Sandbox Provider 的聚合、治理和计费层。客户端描述资源、能力和预算，
+平台负责把请求安全地落到可售 Provider，并返回统一、可审计的结果。
+
+<CardGroup cols={2}>
+  <Card title="xAPI 负责" icon="server">
+    Provider / Offering 发现、报价与选型、生命周期、`exec/files/ports`、鉴权与租户隔离、
+    幂等、状态与错误标准化、计费、账单、日志、历史和 Provider 原生 Extension。
+  </Card>
+  <Card title="上层应用负责" icon="diagram-project">
+    Prompt 和模型循环、Agent 对话与记忆、多 Agent 调度、Job DAG、任务队列、人工审批、
+    业务重试与结果汇总。
+  </Card>
+</CardGroup>
+
+## 原语与 recipe 不混在一起
+
+Cloudflare Browser、后台进程、Code Interpreter、R2 备份或 RunPod 连接信息可以作为
+Provider 原生 Extension 暴露，因为它们是有明确输入输出、限制、状态影响和计费语义的
+Sandbox 原语。
+
+“编码 Agent”“CI 修复”“网页审计”“多 Agent 并行”则是客户端把原语组合成的 recipe。
+Playground 和示例会展示这些真实用法，但 Gateway 不会替应用运行 Agent loop、保存记忆或
+决定业务步骤。
+
+## 什么时候才能说能力可用
+
+<Steps>
+  <Step title="实现并测试">
+    Adapter 驱动已有代码、Schema 和自动化测试。
+  </Step>
+  <Step title="部署并声明">
+    部署后的 `/.well-known/xapi-sandbox` manifest 如实声明能力。
+  </Step>
+  <Step title="物化并定价">
+    Gateway 把能力写入公开 Offering；需要计费的 Extension 已发布费率。
+  </Step>
+  <Step title="真实调用闭环">
+    使用真实 Provider 资源验证成功、错误、超时、审计、结算和销毁，无残留实例。
+  </Step>
+</Steps>
+
+<Warning>
+  “代码完成”不等于线上可用。“线上未物化”表示公开 Offering 还没有声明该能力，
+  因而报价或调用会被 Gateway 正确拒绝。始终以实时 Offering 为准。
+</Warning>
+
+## 能力分层
+
+| 层级 | 示例 | 兼容性承诺 |
+| --- | --- | --- |
+| Core lifecycle | create、get、list、terminate | 所有 Offering 必须支持 |
+| Standard data plane | exec、files、ports、snapshot、suspend/resume | 仅在 Offering 声明时可用，接口统一 |
+| Provider Extension | `cloudflare.browser.*`、`runpod.connection_info` | 保留 Provider 语义，通过统一鉴权、审计和计费调用 |
+| Client recipe | Agent 编码、CI 修复、网页分析、多实例协作 | 示例而非平台 API，由应用负责 |
+
+Provider 能力和价格会随部署变化。调用前读取 [`GET /v1/offerings`](/sandbox/api)，
+需要确定预算时先调用 Quote，再创建实例。

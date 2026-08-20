@@ -896,6 +896,13 @@ components:
           maxItems: 50
           uniqueItems: true
           items: { type: string, maxLength: 160 }
+        minContinuousRuntimeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 31536000
+          description: |
+            任务要求的最短连续运行时间，单位秒。只匹配明确发布生命周期上限的 offering；
+            null 上限表示供应商没有固定截止时间，但不等于宿主永不重启。
     QuoteRequest:
       type: object
       description: 只做规格匹配、预算检查并生成短期报价；不会创建或计费实例。
@@ -1132,6 +1139,41 @@ components:
           allOf:
             - $ref: '#/components/schemas/SuspensionCapabilities'
           description: 规范化后的暂停、恢复和自动唤醒能力。
+        lifecycle:
+          type: object
+          description: 运行时长、空闲处理、keepAlive 与容器重启后状态保留语义。
+          properties:
+            maxContinuousRuntimeSeconds:
+              type: integer
+              nullable: true
+              minimum: 1
+              description: 固定连续运行上限；null 表示没有供应商声明的固定截止时间。
+            idle:
+              type: object
+              properties:
+                configurable: { type: boolean, description: 空闲超时是否可在运行时修改。 }
+                defaultTimeoutSeconds: { type: integer, description: 默认空闲超时秒数。 }
+                minTimeoutSeconds: { type: integer, description: 可设置的最小空闲超时秒数。 }
+                maxTimeoutSeconds: { type: integer, description: 可设置的最大空闲超时秒数。 }
+                action:
+                  type: string
+                  enum: [SUSPEND, STOP_RESET, TERMINATE]
+                  description: STOP_RESET 表示下次访问会启动新容器，旧文件、内存和进程不保留。
+            keepAlive:
+              type: object
+              properties:
+                supported: { type: boolean, description: 是否能阻止空闲自动停止。 }
+                mode: { type: string, enum: [NATIVE, ADAPTER, UNSUPPORTED] }
+            lazyStart: { type: boolean, description: 空闲停止后访问是否能创建新运行时。 }
+            restartRetention:
+              type: object
+              properties:
+                filesystem: { type: boolean }
+                memory: { type: boolean }
+                processes: { type: boolean }
+            gracefulShutdownSeconds:
+              type: integer
+              description: 平台发送终止信号后允许应用清理的最长秒数。
       additionalProperties: true
     OfferingLifecycle:
       type: object

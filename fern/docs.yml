@@ -80,9 +80,15 @@ navigation:
       - page: 概览与核心概念
         path: pages/sandbox/overview.mdx
         slug: overview
+      - page: 产品边界与能力模型
+        path: pages/sandbox/scope.mdx
+        slug: scope
       - page: CLI 使用指南
         path: pages/sandbox/cli.mdx
         slug: cli
+      - page: Cloudflare 专属能力
+        path: pages/sandbox/cloudflare.mdx
+        slug: cloudflare
       - page: REST API 调用流程
         path: pages/sandbox/api-flow.mdx
         slug: api-flow

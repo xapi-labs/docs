@@ -1,0 +1,234 @@
+---
+title: Cloudflare 专属能力
+subtitle: 长时运行实例、Browser Run、后台进程、代码解释器与可选 R2 备份。
+---
+
+Cloudflare Sandbox 通过 `cf-edge` Offering 接入 xAPI。标准 `exec`、`files`、`ports`、
+报价、计费、审计和销毁仍使用统一 API；Cloudflare 原生能力通过
+`POST /v1/sandboxes/{id}/extensions/{extensionId}` 调用。
+
+## 先理解长时运行语义
+
+Cloudflare 没有固定的最长连续运行截止时间。默认空闲 10 分钟后容器停止；下一次访问会
+启动新容器，旧本地文件、内存、进程、Shell session 和 Code Interpreter context 都不会
+保留。启用 `keepAlive` 可以阻止这个空闲停止，但平台维护或宿主更换仍可能造成容器重启。
+
+因此，需要长时运行的客户端应同时做到：
+
+1. 报价时传 `minContinuousRuntimeSeconds: 86400`；
+2. 创建后调用 `cloudflare.set_keep_alive`；
+3. 把任务检查点写入外部存储，或使用 R2 backup；
+4. 在 `finally` 中关闭 keepAlive 并销毁实例。
+
+```json
+{
+  "requirements": {
+    "cpu": { "min": 0.5 },
+    "memoryGiB": { "min": 4 },
+    "minContinuousRuntimeSeconds": 86400,
+    "capabilities": [
+      "exec",
+      "commands.background",
+      "lifecycle.keep_alive",
+      "extension:cloudflare.backup.create"
+    ]
+  },
+  "maxEstimatedHourlyUsd": "0.20"
+}
+```
+
+## 能力清单
+
+| 类别                  | Extension ID                                                                                       | 用途                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 生命周期              | `cloudflare.set_keep_alive`                                                                        | 动态启用或关闭保活                                   |
+| 生命周期              | `cloudflare.set_idle_timeout`                                                                      | 设置 30–86400 秒空闲超时                             |
+| 后台进程              | `cloudflare.process.start/list/get/logs/kill/cleanup`                                              | 启动、观察、取日志和结束服务                         |
+| 就绪检测              | `cloudflare.process.wait_for_port` / `wait_for_log`                                                | 等待 Web 服务或任务 marker                           |
+| Shell 会话            | `cloudflare.session.create/exec/delete`                                                            | 保留 cwd、环境变量和 Shell 状态                      |
+| 代码解释器            | `cloudflare.code.create/run/list/delete`                                                           | 有状态 Python、JavaScript、TypeScript 执行           |
+| Git                   | `cloudflare.git.checkout`                                                                          | 分支、目标目录、浅克隆                               |
+| 文件变化              | `cloudflare.files.check_changes`                                                                   | 用版本游标检查 changed/unchanged/resync              |
+| 持久化                | `cloudflare.backup.create/restore`                                                                 | 把工作区备份到 R2 并恢复                             |
+| 对象存储              | `cloudflare.mount_bucket/unmount_bucket`                                                           | 把 R2/S3/GCS 存储挂载到目录                          |
+| Browser Quick Actions | `cloudflare.browser.content/screenshot/pdf/markdown/snapshot/accessibility_tree/scrape/json/links` | 渲染网页，获取结构化内容、截图或文档                 |
+| Browser 自动化        | `cloudflare.browser.automate`                                                                      | 受控 Playwright 导航、表单交互、DOM 提取、录制和截图 |
+
+Extension 是否可用以实时 Offering 的 `capabilities.extensionIds` 为准。调用未声明的 ID 会被
+Gateway 拒绝，不会偷偷回退为普通 Shell 命令。
+
+当前 xAPI Extension 传输是一次请求、一次 JSON 响应，因此没有把 Cloudflare 的交互式 PTY
+或文件变化 WebSocket 流冒充为已支持能力：交互工作流使用有状态 session，文件监听使用
+`check_changes` 游标轮询。后续统一流式传输协议落地后，再声明 `terminal` 和实时 watch。
+
+## 后台进程与临时服务
+
+标准命令接口使用 `background: true`，返回的 `background.commandId` 就是 Cloudflare
+process ID。随后等待端口、取得公网 URL、读取日志并结束进程：
+
+```bash
+process_json="$(curl -fsS -X POST \
+  "https://cf-edge.sandbox.xapi.to/v1/sandboxes/$sandbox_id/commands" \
+  -H "XAPI-Key: $XAPI_KEY" -H 'Content-Type: application/json' \
+  -d '{"command":"python3 -m http.server 8080 --directory /workspace","background":true}')"
+
+process_id="$(printf '%s' "$process_json" | jq -r '.background.commandId')"
+
+curl -fsS -X POST \
+  "https://cf-edge.sandbox.xapi.to/v1/sandboxes/$sandbox_id/extensions/cloudflare.process.wait_for_port" \
+  -H "XAPI-Key: $XAPI_KEY" -H 'Content-Type: application/json' \
+  -d "{\"idempotencyKey\":\"wait-$sandbox_id-8080\",\"input\":{\"processId\":\"$process_id\",\"port\":8080,\"mode\":\"http\",\"timeoutMs\":60000}}"
+```
+
+获取 `GET /v1/sandboxes/{id}/ports/8080` 返回的 URL 后，仍要从外部真实请求 marker。
+Quick Tunnel 是随机临时地址，不能用作正式域名。
+
+## 有状态 Code Interpreter
+
+先创建 context，后续执行都传同一个 `contextId`，变量和 import 才会保留：
+
+```bash
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.code.create \
+  --provider cf-edge \
+  --input '{"language":"python","cwd":"/workspace"}'
+
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.code.run \
+  --provider cf-edge \
+  --input '{"contextId":"REPLACE_CONTEXT_ID","code":"value = 6 * 7; print(value)"}'
+```
+
+context 只在当前容器生命期内存在；它不是跨重启的持久化数据库。
+
+## R2 备份
+
+`cloudflare.backup.create` 返回 `{id, dir}` 句柄。保存该句柄，恢复时原样放进
+`input.backup`。Bridge 侧必须配置 `BACKUP_BUCKET` R2 binding、bucket 名、Cloudflare
+account ID，以及具有 Object Read & Write 权限的 R2 access key/secret；Adapter 还需设置
+`CLOUDFLARE_SANDBOX_BACKUP_ENABLED=true`。未完成配置时 Offering 不会声明这两个扩展。
+
+备份对象不会随 Sandbox 销毁自动删除。建议使用较短 `ttl`，同时给 R2 的 `backups/`
+前缀配置生命周期删除规则。生产恢复采用 copy-on-write；容器再次停止后挂载会丢失，需要
+用同一备份句柄重新 restore。
+
+## Browser Use
+
+Cloudflare Browser Run 与 Sandbox Container 是两个独立的 Cloudflare 产品。xAPI 把浏览器
+扩展挂到 Sandbox 实例下面，是为了复用同一个用户归属、API Key、操作历史、审计和账单；
+浏览器不会自动共享容器的 `/workspace`、进程或环境变量。一个客户端组合示例是：
+
+1. 用 Quick Action 低成本读取页面 Markdown、links 或 accessibility tree；
+2. 需要点击、填写或登录时才调用 `cloudflare.browser.automate`；
+3. 把结构化结果通过标准 files API 写入 `/workspace`，交给 Sandbox 中的代码分析；
+4. 保存必要证据，然后销毁 Sandbox。浏览器由 Bridge 在每次自动化结束时关闭。
+
+### 按任务选择能力
+
+不要把所有网页任务都交给 Playwright。对用户最舒服、也最容易控制成本的方式，是先选最小
+能力，再按需要升级：
+
+| 用户目标                         | 首选能力                                  | 什么时候换下一层                                      |
+| -------------------------------- | ----------------------------------------- | ----------------------------------------------------- |
+| 读取渲染后的正文                 | `markdown` 或 `content`                   | 还需要截图和可访问性证据时改用 `snapshot`             |
+| 留存一次发布/合规证据            | `snapshot`                                | 需要点击或验证交互状态时再用 `automate`               |
+| 取得页面截图或 PDF               | `screenshot` / `pdf`                      | 不需要额外创建 Sandbox 内的浏览器脚本                 |
+| 按已知 CSS selector 取业务字段   | `scrape`                                  | 页面结构未知、字段需语义归一时再考虑 `json`           |
+| 盘点导航、站内链接和外链         | `links`                                   | 多页面递归抓取需要异步 `crawl`，当前尚未接入          |
+| 让 AI 从页面归一结构化 JSON      | `json`                                    | 它会额外使用 Workers AI；固定 selector 应优先 `scrape` |
+| 点击、填写、选择、等待和 DOM 复核 | `automate`                                | 需要人工接管时要使用未来的用户级 Browser Session      |
+| 分析浏览器结果并生成制品         | files + `cloudflare.code.*`               | 大型流水线可配合 session、process 与 R2 backup         |
+
+这形成一条可选的客户端 recipe：**Read → Act → Evidence → Compute → Persist**。Quick Action 负责低
+成本读取，Playwright 只负责确实需要交互的部分；截图、Markdown、提取结果和录制 ID 作为证据，
+写入 `/workspace` 后由 Code Interpreter 或普通 `exec` 分析，最终把需要保留的制品下载或备份。
+
+上层产品可以自行封装“网页读取”“结构化抽取”“交互验证”“发布审计”等 recipe，
+也可以直接调用 Extension。xAPI 只保证这些原语的鉴权、用户归属、能力声明、审计和计费，
+不执行 Agent 的业务规划、记忆或任务编排。
+
+### 快速获取页面快照
+
+```bash
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.browser.snapshot \
+  --provider cf-edge \
+  --input '{
+    "url":"https://example.com/",
+    "formats":["screenshot","markdown","accessibilityTree"]
+  }'
+```
+
+返回外层字段含义：
+
+| 字段            | 含义                                               |
+| --------------- | -------------------------------------------------- |
+| `action`        | 实际执行的 Cloudflare Quick Action                 |
+| `browserMsUsed` | Cloudflare 响应头返回的本次浏览器使用毫秒数        |
+| `contentType`   | 上游响应类型；决定 `result` 是 JSON、文本或 base64 |
+| `byteLength`    | 返回体字节数，不等于计费时长                       |
+| `result`        | Quick Action 的原始结构化结果                      |
+
+### 受控 Playwright 自动化
+
+```bash
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.browser.automate \
+  --provider cf-edge \
+  --input '{
+    "url":"https://demo.playwright.dev/todomvc/",
+    "recording":true,
+    "actions":[
+      {"type":"fill","selector":".new-todo","value":"review xAPI report"},
+      {"type":"press","selector":".new-todo","key":"Enter"},
+      {"type":"check","selector":".todo-list li .toggle"},
+      {"type":"wait_for_selector","selector":".todo-list li.completed"}
+    ],
+    "extract":[
+      {"name":"todos","selector":".todo-list li label","all":true}
+    ],
+    "screenshot":{"type":"png","fullPage":true}
+  }'
+```
+
+自动化最多 40 个动作、30 个提取项，单次超时最多 60 秒，显式 wait 最多 5 秒。Bridge
+拒绝带用户名/密码的 URL、常见本机或私网地址、超大请求和超过 8 MiB 的响应。不要把 token
+写进 URL；需要登录的生产工作流应在 xAPI 建立专门的 Secret 注入与域名策略后再开放。
+
+响应中的 `sessionId` 用于审计，`recorded` 表示已请求录制，`browserElapsedMs` 是 Bridge
+测得的端到端浏览器耗时，`extracted` 是按 selector 提取的结果，`screenshot` 是 base64。
+当前接口是一次请求、一次关闭的流程，不能用这个 `sessionId` 继续接管浏览器。
+
+Quick Action 的主要输入并不完全相同：
+
+- `snapshot` 的 `formats` 至少包含两项，可选 `content`、`screenshot`、`markdown` 和
+  `accessibilityTree`；
+- `scrape` 必须提供 `elements`，每项至少有一个 CSS `selector`；
+- `json` 必须提供 `prompt` 或 `response_format`，适合语义提取而不是固定 DOM 读取；
+- 所有动作都可使用 `url` 或 `html`，但不能把 Cookie、Basic Auth 或其他原始凭据放进
+  可审计参数。
+
+Browser Run 的浏览器时间与 `json` Quick Action 可能产生的 Workers AI 费用不包含在
+Sandbox Container 小时价里；Offering 会用独立的 `OPERATION` 费率结算每种扩展。
+
+<Warning>
+  当前未开放持久 CDP、Live View
+  和人工接管。它们需要用户级会话所有权、过期和显式关闭、 WebSocket
+  代理以及凭据隔离。直接返回 Cloudflare CDP URL 会绕开 xAPI 鉴权与审计，因此
+  不能把它伪装成已经支持。
+</Warning>
+
+## 可直接运行的完整 Demo
+
+仓库 `sandbox-api-demos` 提供四份零依赖 Node.js 示例：
+
+```bash
+npm run demo:cf-agent   # 一天 Agent 工作区：Git/session/code/process/port/change
+npm run demo:cf-backup  # R2 备份、覆盖文件、恢复并核对内容
+npm run demo:cf-browser # Browser Run 全链路能力冒烟
+npm run demo:cf-audit   # 网站发布审计：结构、链接、录制、双截图和可下载报告
+```
+
+其中 `demo:cf-audit` 是面向用户的完整业务参考：默认审计 Cloudflare Browser Run 官方页面，
+也可通过 `XAPI_CF_AUDIT_URL` 与 `XAPI_CF_AUDIT_EXPECT` 验收自己的发布页。它把
+`report.json`、`report.md`、`evidence.json`、页面 Markdown 和两张 PNG 保存到本地
+`artifacts/`，不是只打印 HTTP 200。
+
+四个脚本都会真实报价、创建计费实例、执行验证、销毁、等待终态，并核对 operations、
+events、usageSegments、billingPeriods 和活动历史残留。

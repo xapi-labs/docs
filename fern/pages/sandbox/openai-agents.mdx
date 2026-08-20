@@ -3,6 +3,12 @@ title: OpenAI Agents + xAPI Sandbox
 subtitle: 用 ai.xapi.to 的 DeepSeek 负责规划，用 xAPI Sandbox 负责真实、隔离、可审计的工具执行。
 ---
 
+<Info>
+  本页是客户端集成示例：OpenAI Agents SDK 负责模型循环和工具决策，`ai.xapi.to`
+  提供模型协议，xAPI Sandbox 只提供隔离计算、生命周期、审计和计费。xAPI Gateway
+  不托管 Agent 记忆、Prompt 或编排。参见[产品边界与能力模型](/sandbox/scope)。
+</Info>
+
 OpenAI Agents SDK 的 `SandboxAgent` 把“模型推理”和“Sandbox 计算”分成两个独立接口：
 
 ```text

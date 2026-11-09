@@ -1,0 +1,104 @@
+---
+title: 服务商接入
+subtitle: 用 Agent + xAPI Provider Skill、OpenAPI 导入或手动创建，把你的 API 发布到 xAPI。
+---
+
+把你的 API 发布到 xAPI 之后，所有接入 xAPI 的 Agent 都能直接发现并调用它。鉴权、计费、结算和调用日志由平台处理，你只需要提供上游接口、设定价格。
+
+接入有三种方式，推荐顺序如下：
+
+| 方式 | 适合 | 你要准备的 |
+|---|---|---|
+| **Agent + xAPI Provider Skill**（推荐） | 有接口文档、想几分钟内完成接入 | 接口文档（网页地址、OpenAPI 文件或 README）和一个服务商 Key |
+| **导入 OpenAPI** | 已经有 OpenAPI / Swagger 文档 | OpenAPI 3.x 或 Swagger 2.0 文件（JSON / YAML）或文档地址 |
+| **手动创建** | 接口很少，或想逐个配置 | 上游地址、每个接口的方法和路径 |
+
+入口都在控制台左侧 **服务商 → 注册 API**（或工作区里的「新建服务」）。
+
+## 方式一：用 Agent 快速发布（推荐）
+
+xAPI Provider Skill 让你正在用的 AI 助手（Claude Code、Codex、Cursor 等）直接替你完成接入：读文档、整理接口和参数、配置计费、创建服务并提交审核。整个过程通过 `xapi-to` 命令行完成，Agent 不需要你手写任何配置。
+
+#### 1. 生成服务商 Key
+
+在 **注册 API** 弹窗里选「新建服务」，点 **生成 Key**。这个 Key 只带服务商需要的权限：
+
+| 权限 | 用途 |
+|---|---|
+| `service:create` | 创建服务、导入 OpenAPI |
+| `service:read` | 查看服务、修订、审核结果 |
+| `service:update` | 修改接口、计费和上游配置 |
+| `version:create` | 开新的修订或大版本 |
+| `service:publish` | 提交审核、发布 |
+
+<Note>
+不要把 Key 贴进对话里。Agent 开始操作前会请你在终端里输入，Key 只保存在本机的 `xapi-to` 配置中。
+</Note>
+
+#### 2. 把这段话发给你的 Agent
+
+在同一个弹窗里填上文档地址，点 **复制给 Agent**，得到的就是下面这段话：
+
+```text
+安装 skill：npx skills add xapi-labs/xapi-cli --skill xapi-provider
+用它把这个 API 发布到 xAPI，接口和价格先列给我确认再提交审核；Key 我会在终端里输入。
+文档：<地址或 openapi.yaml 路径>
+```
+
+#### 3. 确认 Agent 列出的接口和价格
+
+Agent 会先把整理出的接口、参数和计费方式列给你，确认后才会创建服务并提交审核。常用的几步命令（Agent 会自己执行，你可以随时在终端里复核）：
+
+```bash
+npx xapi-to provider spec-rules                  # 读取平台当前的 OpenAPI 规则
+npx xapi-to provider import --file openapi.json  # 从 OpenAPI 创建草稿服务
+npx xapi-to provider diff <service-id> <major>   # 提交前查看改动
+npx xapi-to provider submit <service-id> --revision <revision-id>
+npx xapi-to provider wait <service-id> --revision <revision-id>
+```
+
+上游密钥这类敏感值，Agent 只会写进本地的配置文件再上传，不会出现在命令参数或总结里。
+
+## 方式二：导入 OpenAPI
+
+在 **注册 API** 里选「导入 OpenAPI」，上传 OpenAPI / Swagger 文件或填文档地址，确认服务信息和价格后，接口会一次生成。文档里的 `x-xapi-*` 扩展字段可以直接带上分类、计费和流式配置，详见 [OpenAPI 导入规范](/provider/openapi)。
+
+## 方式三：手动创建
+
+在 **注册 API** 里选「手动创建」，先建一个空服务，再在工作区的「管理 API」里逐个添加接口，填写参数、响应示例和计费。
+
+## 发布流程
+
+无论用哪种方式，服务都会经过同样的几步：
+
+| 状态 | 含义 | 你可以做什么 |
+|---|---|---|
+| `DRAFT` | 刚创建的草稿 | 补全上游地址、接口和计费 |
+| `SANDBOX` | 配置有效，可以测试 | 在「管理 API」里用「测试」先调一遍，然后 **提交审核** |
+| `IN_REVIEW` | 平台正在自动测试你的接口 | 等待结果 |
+| `PUBLISHED` | 审核通过，对外提供服务 | 在市场里可见，开始产生收益 |
+
+审核通过后会自动发布上线。审核没通过时，修订会退回 `SANDBOX`，工作区顶部会提示「审核未通过」，点 **查看失败原因** 修改后可以再次提交；结果不确定时会转人工审核。
+
+已发布的修订不能直接修改：在工作区里改动会生成一个新的工作修订（例如 `v1 r4`），重新提交审核通过后才替换线上版本。需要不兼容的改动时，新建一个大版本（`v2`），老版本的调用方不受影响。线上出问题时，可以回滚到之前发布过的修订。
+
+## 上游凭据与安全
+
+- 上游需要的 API Key / Token 只填在「上游接入」里（命令行里是 `privateHeaders`），不要写进接口描述、示例或更新说明。
+- 凭据只在网关转发时注入上游请求，调用方看不到。
+- 工作区里凭据默认显示为星号；服务的所有者用 X、钱包等账号登录（不是用 API Key 登录）时，可以长按查看明文。命令行和接口读取时，凭据会被隐去。
+- 换密钥时开一个新的工作修订，只更新凭据后重新提交。
+
+## 接入模式
+
+| 模式 | 说明 |
+|---|---|
+| `PROXY`（默认） | 调用经 xAPI 网关转发：统一鉴权、计量、计费与日志，调用方只需要一个 xAPI Key |
+| `DIRECT` | 只在目录里展示，调用方直连你的上游地址；不经网关、不计费 |
+
+需要计费、调用统计或限流时，使用 `PROXY`。
+
+## 下一步
+
+- [OpenAPI 导入规范](/provider/openapi)：文档格式要求、鉴权映射和 `x-xapi-*` 扩展字段
+- [计费与收益](/provider/pricing)：四种计费方式、免费接口、结算和提现

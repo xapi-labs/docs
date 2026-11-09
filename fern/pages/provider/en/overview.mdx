@@ -1,0 +1,104 @@
+---
+title: Provider onboarding
+subtitle: Publish your API on xAPI with an agent and the xAPI Provider Skill, an OpenAPI import, or by hand.
+---
+
+Once your API is published on xAPI, every agent connected to xAPI can discover and call it. The platform handles authentication, billing, settlement and call logs; you provide the upstream endpoints and set the prices.
+
+There are three ways to onboard, in order of recommendation:
+
+| Method | Best for | What you need |
+|---|---|---|
+| **Agent + xAPI Provider Skill** (recommended) | You have API docs and want to be done in minutes | Your API docs (a web page, an OpenAPI file or a README) and a provider key |
+| **Import OpenAPI** | You already have an OpenAPI / Swagger document | An OpenAPI 3.x or Swagger 2.0 file (JSON / YAML) or its URL |
+| **Create manually** | Only a few endpoints, or you want to configure each one yourself | The upstream base URL, plus the method and path of each endpoint |
+
+All three start from **Provider → Register API** in the console sidebar (or **New service** in your workspace).
+
+## Option 1: Publish with an agent (recommended)
+
+The xAPI Provider Skill lets the AI assistant you already use (Claude Code, Codex, Cursor and others) do the onboarding for you: it reads your docs, organizes the endpoints and parameters, sets up billing, creates the service and submits it for review. Everything runs through the `xapi-to` CLI, so you don't write any configuration by hand.
+
+#### 1. Generate a provider key
+
+In the **Register API** dialog, choose **New service** and click **Generate key**. The key carries only the scopes a provider needs:
+
+| Scope | Used for |
+|---|---|
+| `service:create` | Creating services and importing OpenAPI |
+| `service:read` | Reading services, revisions and review results |
+| `service:update` | Changing endpoints, billing and upstream settings |
+| `version:create` | Starting a new revision or major version |
+| `service:publish` | Submitting for review and publishing |
+
+<Note>
+Don't paste the key into the chat. Before it starts, the agent asks you to enter the key in your terminal, and the key is stored only in the local `xapi-to` configuration on your machine.
+</Note>
+
+#### 2. Send this message to your agent
+
+In the same dialog, enter your docs URL and click **Copy for agent**. You get this message:
+
+```text
+Install the skill: npx skills add xapi-labs/xapi-cli --skill xapi-provider
+Use it to publish this API to xAPI, list the endpoints and prices for me to confirm before you submit for review; I'll enter the key in the terminal.
+Docs: <URL or path to openapi.yaml>
+```
+
+#### 3. Confirm the endpoints and prices the agent lists
+
+The agent first lists the endpoints, parameters and billing it has worked out, and creates and submits the service only after you confirm. These are the main commands it runs (you can re-check any of them in your terminal):
+
+```bash
+npx xapi-to provider spec-rules                  # read the platform's current OpenAPI rules
+npx xapi-to provider import --file openapi.json  # create a draft service from OpenAPI
+npx xapi-to provider diff <service-id> <major>   # review the changes before submitting
+npx xapi-to provider submit <service-id> --revision <revision-id>
+npx xapi-to provider wait <service-id> --revision <revision-id>
+```
+
+Sensitive values such as upstream keys are written only to a local config file and uploaded from there; they never appear in command arguments or in the agent's summary.
+
+## Option 2: Import OpenAPI
+
+In **Register API**, choose **Import OpenAPI**, upload an OpenAPI / Swagger file or enter its URL, then confirm the service details and prices; all endpoints are generated at once. `x-xapi-*` extension fields in the document can carry the category, billing and streaming settings directly. See [OpenAPI import rules](/provider/en/openapi).
+
+## Option 3: Create manually
+
+In **Register API**, choose **Create manually** to create an empty service, then add endpoints one by one under **Manage APIs** in your workspace, with their parameters, response examples and billing.
+
+## Publishing flow
+
+Whichever method you use, a service goes through the same steps:
+
+| State | Meaning | What you can do |
+|---|---|---|
+| `DRAFT` | A newly created draft | Fill in the upstream URL, endpoints and billing |
+| `SANDBOX` | The configuration is valid and can be tested | Try each endpoint with **Test** under **Manage APIs**, then **Submit for review** |
+| `IN_REVIEW` | The platform is testing your endpoints automatically | Wait for the result |
+| `PUBLISHED` | Approved and serving traffic | Listed in the marketplace and earning revenue |
+
+An approved revision goes live automatically. If the review fails, the revision returns to `SANDBOX` and the workspace shows **Review failed** at the top; click **View failure reasons**, fix the issues and submit again. When the result is inconclusive, the review goes to a human reviewer.
+
+A published revision can't be edited in place: changes in the workspace create a new working revision (for example `v1 r4`), which replaces the live one only after it passes review. For breaking changes, create a new major version (`v2`); callers of the old version are not affected. If something goes wrong in production, you can roll back to a previously published revision.
+
+## Upstream credentials and security
+
+- Put the API keys / tokens your upstream needs only under **Upstream** (`privateHeaders` on the CLI). Never put them in endpoint descriptions, examples or release notes.
+- Credentials are injected into the upstream request only when the gateway forwards a call; callers never see them.
+- Credentials are masked in the workspace by default. The service owner can press and hold to reveal them when signed in with X, a wallet or another account (not with an API key). The CLI and API always return them redacted.
+- To rotate a key, start a new working revision, update only the credential and submit it again.
+
+## Access modes
+
+| Mode | Description |
+|---|---|
+| `PROXY` (default) | Calls go through the xAPI gateway: one place for authentication, metering, billing and logs, and callers need only an xAPI Key |
+| `DIRECT` | Listed in the directory only; callers connect to your upstream URL directly, without the gateway and without billing |
+
+Use `PROXY` whenever you need billing, call statistics or rate limiting.
+
+## Next steps
+
+- [OpenAPI import rules](/provider/en/openapi): document requirements, auth mapping and `x-xapi-*` extension fields
+- [Billing and earnings](/provider/en/pricing): the four billing types, free endpoints, settlement and withdrawals

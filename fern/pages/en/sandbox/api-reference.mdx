@@ -1,0 +1,349 @@
+---
+title: All REST APIs and testing
+subtitle: All 17 Sandbox endpoints on one page. Production is the default, and you can switch to the Test Gateway.
+---
+
+<Warning>
+  Both the Test and Production Gateways connect to real providers and incur real charges. Get a quote
+  and set a budget cap before you call the create endpoint; save the instance ID, and always call the terminate endpoint in `finally`.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Discovery and quotes" icon="fa-solid fa-magnifying-glass-dollar" href="#discovery-and-quotes">
+    3 endpoints: offerings, environments and quotes.
+  </Card>
+  <Card title="Instance lifecycle" icon="fa-solid fa-arrows-rotate" href="#instance-lifecycle">
+    6 endpoints: list, create, details, suspend, resume and terminate.
+  </Card>
+  <Card title="Execution and artifacts" icon="fa-solid fa-terminal" href="#execution-and-artifacts">
+    6 endpoints: shell, files, directories, ports and extensions.
+  </Card>
+  <Card title="Audit and history" icon="fa-solid fa-clock-rotate-left" href="#audit-and-history">
+    2 endpoints: instance history and the four audit streams.
+  </Card>
+</CardGroup>
+
+Each component shows the method, URL, path parameters, query parameters, request body and a send button. Use the
+**Production / Test** tabs above an endpoint to switch between `https://sandbox.xapi.to` and
+`https://sandbox.test.xapi.to`. Production is selected by default; when you switch on any endpoint,
+the other endpoints on this page switch to the same environment.
+For endpoints that require authentication, enter the `XAPI-Key` for the selected environment in the component. Don't mix test and production keys.
+
+## End-to-end Sandbox API test flow
+
+<Steps>
+  <Step title="Free connectivity check">
+    Expand **List offerings** and click **Try it → Send request**. Expect HTTP `200`, and confirm that the target
+    offering has `capabilities.exec=true`. This step needs no key and creates no resources.
+  </Step>
+  <Step title="Get a quote">
+    Expand **Get a Sandbox quote**, enter your `XAPI-Key` in the API Explorer, set
+    `requirements.capabilities` to `exec, files`, and set
+    `maxEstimatedHourlyUsd=0.20`. Expect HTTP `201`; copy `quoteId`,
+    `expiresAt` and `estimatedHourlyUsd` from the response. A quote by itself does not create an instance.
+  </Step>
+  <Step title="Create and save the instance ID">
+    Expand **Create a Sandbox instance**, put the `quoteId` from the previous step into `selection.quoteId`, and change
+    `idempotencyKey` to a value unique to this test run, for example
+    `manual-browser-20260813-001`. Expect HTTP `202`; save the `id` from the response right away.
+    At this point `observedState=PROVISIONING` and the instance cannot run tasks yet.
+  </Step>
+  <Step title="Wait for RUNNING and run the marker">
+    Use **Get instance details** to query the same `id` every 2 seconds until `observedState=RUNNING`. Then, in
+    **Run a shell command**, run `printf 'MANUAL_TEST_OK=42\n'`. HTTP should be `201`, and
+    the response must show both `exitCode=0` and `stdout` containing `MANUAL_TEST_OK=42`.
+  </Step>
+  <Step title="Terminate whether it succeeded or failed">
+    In **Terminate an instance**, enter the same instance `id` and a new action idempotency key. After submitting, keep querying the details until
+    `observedState=TERMINATED` or the terminal `FAILED` state. Closing the web page does not terminate the instance.
+  </Step>
+  <Step title="Check audit, cost and leftovers">
+    Query the four audit streams: CREATE/EXEC/TERMINATE in `operations` should have succeeded, `events` should cover
+    RUNNING and the terminal state, `usageSegments` should have no open segments, and all `billingPeriods` should be settled.
+    Finally, query history with `state=ACTIVE` and confirm that no active instance from this run remains. **List account instances** keeps
+    `TERMINATED` / `FAILED` terminal records, so a non-empty list does not mean resources are still running.
+  </Step>
+</Steps>
+
+<Tip>
+  In the API Explorer, enter the key only in the credential field. Never put it in the request body, metadata, screenshots or doc source.
+  Check the URL again before sending: the page uses `https://sandbox.xapi.to` by default; switch to
+  `https://sandbox.test.xapi.to` only when you are explicitly running test acceptance. Both environments request real provider resources and incur real charges.
+</Tip>
+
+### One-command acceptance with the new local CLI
+
+If you just want the fastest check of the real path, run the new, not-yet-released CLI from local source. It runs
+`quote → create → wait → exec → terminate → cost` automatically:
+
+```bash
+cd /Users/daxiongya/Desktop/Projects/web3/x402/bsc/xapi-workspace/xapi-cli
+npm run build
+
+node dist/index.js sandbox run \
+  --host sandbox.xapi.to \
+  --capabilities exec,files \
+  --max-hourly-usd 0.20 \
+  --command 'printf "MANUAL_TEST_OK=42\n"' \
+  --format pretty
+```
+
+On a pass, check for: `readyState=RUNNING`, `result.exitCode=0`, the marker in `stdout`,
+`cleanup.state=TERMINATED` and `finalState=TERMINATED`, and record the `totalCost` returned by the server.
+
+## Discovery and quotes
+
+### List offerings
+
+No side effects, no authentication. Use it to see the current resources, capabilities, lifecycle and prices.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/offerings" defaultEnvironment="Production" />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/offerings" defaultEnvironment="Test" />
+  </Tab>
+</Tabs>
+
+### List environment presets
+
+No side effects, no authentication. Returns the runtime presets explicitly declared by the Offerings currently on sale, for choosing
+`requirements.environmentId`. An empty `[]` means no provider currently publishes a stable environment preset;
+it is not an endpoint failure. In that case, omit `environmentId` and select by `capabilities`, CPU, memory, GPU and region instead.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/environments" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/environments" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Get a Sandbox quote
+
+Requires authentication but does not create an instance. Set `maxEstimatedHourlyUsd` first, and save the returned `quoteId`.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/quotes" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/quotes" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+## Instance lifecycle
+
+<Warning>
+  From this group on, the endpoints read or change account resources. After creating an instance, record its ID and terminate it on every success, failure and interruption path.
+</Warning>
+
+### List account instances
+
+Returns every instance in the account, including terminal records. For a zero-leftover check, use `state=ACTIVE` on the history endpoint below.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Create a Sandbox instance
+
+A `202` only means the request was accepted. Retries of the same create must reuse the `idempotencyKey`.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Get instance details
+
+Poll until `observedState=RUNNING` before running commands or file operations.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Suspend an instance
+
+Use only when the offering declares suspension support.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/suspend" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/suspend" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Resume an instance
+
+After resuming, keep querying the details until the instance is back in `RUNNING`.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/resume" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/resume" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Terminate an instance
+
+Put it in `finally`; after submitting, keep waiting for `TERMINATED` or the provider's terminal `FAILED` state.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/terminate" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/terminate" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+## Execution and artifacts
+
+### Run a shell command
+
+A successful HTTP response does not mean the command succeeded; you must also check `exitCode=0`.
+
+To start a long-running process such as a web server, first confirm that the Offering returns
+`capabilities.backgroundExec=true`, then pass `background=true`. This creates a provider-managed background session;
+don't enable it for ordinary commands. A background response only proves the session was accepted; you still need to poll the app's health URL to confirm the service is actually ready.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/commands" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/commands" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Write a file
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/files" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/files" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Read a file
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### List files
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files/list" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/files/list" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Get a port URL
+
+The service inside the instance must be started with `background=true` and listen on `0.0.0.0`, and the Offering must declare both
+`backgroundExec` and `ports`. After you get the URL, you still need to request the marker from outside, with the returned headers (if any);
+getting a URL does not mean the app is ready.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/ports/{port}" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/ports/{port}" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Call a provider extension
+
+Call only extensions the offering explicitly declares, such as `runpod.connection_info`.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/extensions/{extensionId}" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="POST /v1/sandboxes/{id}/extensions/{extensionId}" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+## Audit and history
+
+### Get instance history
+
+Search by state, instance ID, provider and time range; use it for cleanup gates and cost reconciliation.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandbox-history" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandbox-history" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+### Get an instance audit stream
+
+Choose `operations`, `events`, `usageSegments` or `billingPeriods`.
+
+<Tabs>
+  <Tab title="Production" language="production">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/audit" defaultEnvironment="Production" collapsed />
+  </Tab>
+  <Tab title="Test" language="test">
+    <RunnableEndpoint endpoint="GET /v1/sandboxes/{id}/audit" defaultEnvironment="Test" collapsed />
+  </Tab>
+</Tabs>
+
+## Completion criteria
+
+<Steps>
+  <Step title="Business result passes">
+    HTTP status codes are correct; the shell command also shows `exitCode=0`; files and public URLs contain the expected artifacts.
+  </Step>
+  <Step title="Instance reaches a terminal state">
+    After terminating, keep querying until `observedState=TERMINATED` or the provider's terminal `FAILED` state.
+  </Step>
+  <Step title="Audit and cost are complete">
+    Operations, events, usage segments and billing periods can all be queried; cost uses the server's `totalCost`.
+  </Step>
+  <Step title="No resources left behind">
+    ACTIVE history contains no instance from this test that is still billing; terminal records still appearing in the account instance list are expected.
+  </Step>
+</Steps>
+
+<Info>
+  To generate code in other languages or see the full response schema, use the
+  **per-endpoint API Reference** in the sidebar; for everyday browsing and trying calls, stay on this page.
+</Info>

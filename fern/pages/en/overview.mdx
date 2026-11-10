@@ -1,0 +1,57 @@
+---
+title: xAPI documentation
+subtitle: AI Gateway and Sandbox are two separate products. They share your account and API key but solve different problems.
+---
+
+xAPI provides two kinds of infrastructure for AI applications. **AI Gateway** handles model inference and routing across
+upstreams; **Sandbox** handles isolated compute, code execution and instance lifecycle. You can use either one on its own,
+or combine them into an agent workflow where "the model plans and Sandbox executes".
+
+<CardGroup cols={2}>
+  <Card title="AI Gateway" href="/en/ai/overview" icon="brain">
+    Call Claude, GPT, Gemini, DeepSeek, Kimi and other models through one gateway. Compatible with the Anthropic and
+    OpenAI protocols, with routing across upstreams, streaming responses, failover and token billing.
+  </Card>
+  <Card title="Sandbox" href="/en/sandbox/overview" icon="terminal">
+    Create isolated, temporary cloud environments to run commands, read and write files, expose ports and run GPU jobs,
+    with a history of instances, operations, usage and settlements.
+  </Card>
+</CardGroup>
+
+## How the two products differ
+
+| | AI Gateway | Sandbox |
+| --- | --- | --- |
+| Core purpose | Call and route large models | Run code and workloads |
+| Main endpoint | `https://ai.xapi.to` | `https://sandbox.xapi.to` |
+| Resource unit | Model requests, tokens | Instances, CPU, memory, GPU, run time |
+| Lifecycle | A single HTTP / SSE / WebSocket session | Quote, create, execute, suspend, resume, terminate |
+| Main logs | Model, tokens, latency, cost, routing | Operations, events, usage segments, billing periods, instance status |
+| Typical clients | OpenAI/Anthropic SDKs, IDEs, AI apps | xAPI CLI, Agent Tool, OpenAI Agents Sandbox |
+
+<Note>
+  Sharing an API key does not mean sharing an API. Use AI Gateway to call models; use Sandbox when you need a shell,
+  a file system, web previews or GPUs.
+</Note>
+
+## Choose where to start
+
+<CardGroup cols={2}>
+  <Card title="Start calling AI models" href="/en/ai/quickstart" icon="bolt">
+    Make your first model request with curl, the OpenAI SDK or the Anthropic SDK.
+  </Card>
+  <Card title="Start running Sandbox" href="/en/sandbox/cli" icon="play">
+    Let the CLI handle quoting, creation, execution, auditing and termination for you.
+  </Card>
+  <Card title="Set up developer tools" href="/en/ai/integrations/claude-code" icon="code">
+    Connect clients such as Claude Code, Codex, Cursor, Cline and OpenClaw.
+  </Card>
+  <Card title="Build an AI + Sandbox agent" href="/en/sandbox/openai-agents" icon="robot">
+    Plan with DeepSeek on ai.xapi.to and run the tool calls in xAPI Sandbox.
+  </Card>
+</CardGroup>
+
+<Tip>
+  New users can create an API key in the [xapi.to](https://xapi.to) console. For the domains, log locations and
+  acceptance checks of production and the test environment, see [Test environment and logs](/en/sandbox/testing).
+</Tip>

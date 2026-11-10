@@ -1,0 +1,258 @@
+---
+title: REST API call flow
+subtitle: From quote to create, execute, audit and terminate. Uses the production Gateway by default, and every step can be verified with curl or the API Explorer.
+---
+
+A Sandbox is a billed resource with a lifecycle, not an ordinary one-off API. A complete call must cover
+**resource selection, waiting on state, running the workload, audit and cleanup**. Getting an HTTP 200/202 for a create or terminate operation
+doesn't mean the instance has finished its state transition.
+
+<CardGroup cols={3}>
+  <Card
+    title="All endpoints and testing"
+    icon="fa-solid fa-code"
+    href="/en/sandbox/api"
+  >
+    View and test all 17 endpoints on one page.
+  </Card>
+  <Card title="Safe CLI wrapper" icon="fa-solid fa-terminal" href="/en/sandbox/cli">
+    One-off commands with automatic quoting, waiting, execution and finally cleanup.
+  </Card>
+  <Card title="Logs and audit" icon="fa-solid fa-clock-rotate-left" href="/en/sandbox/testing">
+    Check calls, states, usage, billing periods and past instances in the Console.
+  </Card>
+</CardGroup>
+
+## Environments and authentication
+
+| Environment | Base URL | Purpose |
+| --- | --- | --- |
+| Production (default) | `https://sandbox.xapi.to` | Real workloads, and the default target of the docs Explorer and generated code |
+| Test | `https://sandbox.test.xapi.to` | Integration tests and pre-release acceptance; must be selected explicitly |
+
+Every endpoint that needs an account identity accepts:
+
+```http
+XAPI-Key: sk-xapi-...
+```
+
+<Warning>
+  The test Gateway still connects to real providers, creates real resources and settles from the test account. Don't put your API key
+  in URLs, source code, remote commands or screenshots, and always terminate every instance you create.
+</Warning>
+
+## Full lifecycle
+
+<Steps>
+  <Step title="Check specs and environments">
+    Call `GET /v1/offerings` and `GET /v1/environments` to confirm resources, capabilities, suspend support and prices.
+    Neither endpoint creates an instance.
+  </Step>
+  <Step title="Get a quote for your requirements">
+    Call `POST /v1/quotes`, declaring `exec / files / ports`, CPU, memory, GPU, region and
+    `maxEstimatedHourlyUsd`. Save the returned `quoteId` and `expiresAt`.
+  </Step>
+  <Step title="Create the instance">
+    Call `POST /v1/sandboxes` with the `quoteId` in `selection`. Generate a stable
+    `idempotencyKey` for each business task; if the create response is lost, the retry must reuse the same key.
+  </Step>
+  <Step title="Wait for RUNNING">
+    After the create endpoint returns `202 Accepted`, poll `GET /v1/sandboxes/{id}`.
+    Run commands or access files only once `observedState=RUNNING`.
+  </Step>
+  <Step title="Run the workload">
+    Call commands, files, ports or extensions based on the offering's capabilities. A shell command succeeds only when
+    the HTTP call succeeds and the response has `exitCode=0`.
+  </Step>
+  <Step title="Check the audit">
+    You can read the audit while the instance runs to track down problems, but at that point usage segments and billing periods are usually still open
+    and can't serve as final settlement evidence.
+  </Step>
+  <Step title="Terminate and confirm the terminal state">
+    Call `POST /v1/sandboxes/{id}/terminate` in `finally` or a shell `trap`, then keep polling
+    until `observedState=TERMINATED` or provider-terminal `FAILED`. Once terminal, read
+    `operations`, `events`, `usageSegments` and `billingPeriods` again and check the TERMINATE operation,
+    the terminal event, closed usage segments, settled billing periods and the server-side `totalCost`. Finally, use
+    `sandbox-history?state=ACTIVE` to confirm nothing from this instance is left behind.
+  </Step>
+</Steps>
+
+## Try it in the docs
+
+Open **All REST APIs and testing** in the sidebar. All 17 endpoints are on one page, grouped into four categories; in each component you can fill in
+parameters, send a Test request and see the full response. Go to the **per-endpoint API Reference** only when you need code in a specific language or the full schema.
+
+<Steps>
+  <Step title="Confirm the Production environment and authenticate">
+    The page selects `Production` by default; enter your production account's `XAPI-Key` in the auth box. For acceptance testing, explicitly
+    switch to `Test` and use a test account key. Don't put the key in the URL or request body.
+  </Step>
+  <Step title="Get a quote and save the quoteId">
+    Call **Get a Sandbox quote**. It doesn't create any resources, but it checks authentication, budget and spec selection.
+  </Step>
+  <Step title="Create the instance and save its id">
+    Put the `quoteId` in `selection.quoteId` and create the instance with a stable, unique `idempotencyKey`.
+  </Step>
+  <Step title="Wait for RUNNING, then execute">
+    Poll with **Get instance details**; call the command, file or port endpoints only after `observedState=RUNNING`.
+  </Step>
+  <Step title="Terminate, wait and audit">
+    Whether or not the steps in between succeeded, call **Terminate an instance**, then query the audit and history once the terminal state is confirmed.
+  </Step>
+</Steps>
+
+### Test the quote endpoint directly
+
+Below is an embedded request builder that sends real requests. It only generates a quote and does not create an instance:
+
+<RunnableEndpoint endpoint="POST /v1/quotes" />
+
+<Tip>
+  The Explorer generates curl, TypeScript, Python and other client code from the OpenAPI examples. The page doesn't
+  write your API key to the repository, but clear the auth box anyway before you share your screen or record it.
+</Tip>
+
+## One-step test script
+
+The script below connects to the production Gateway by default and verifies quote → create → wait → exec → audit → terminate.
+For the test environment, explicitly change `base_url` to `https://sandbox.test.xapi.to` and use a test key.
+It needs `curl` and `jq` installed locally, and makes a best effort to clean up the instance through `trap`.
+
+<Accordion title="Show the full curl lifecycle script">
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+base_url="https://sandbox.xapi.to"
+read -rsp "XAPI production key: " XAPI_KEY
+printf '\n'
+
+instance_id=""
+cleanup() {
+  if [[ -n "$instance_id" ]]; then
+    curl -fsS -X POST "$base_url/v1/sandboxes/$instance_id/terminate" \
+      -H "XAPI-Key: $XAPI_KEY" \
+      -H "Content-Type: application/json" \
+      -d "{\"idempotencyKey\":\"docs-terminate-$instance_id\"}" >/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+quote_json="$(curl -fsS -X POST "$base_url/v1/quotes" \
+  -H "XAPI-Key: $XAPI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requirements": {"capabilities": ["exec", "files"]},
+    "maxEstimatedHourlyUsd": "0.20"
+  }')"
+quote_id="$(jq -er '.quoteId' <<<"$quote_json")"
+
+create_key="docs-create-$(date +%s)-$RANDOM"
+create_json="$(curl -fsS -X POST "$base_url/v1/sandboxes" \
+  -H "XAPI-Key: $XAPI_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"selection\": {\"quoteId\": \"$quote_id\"},
+    \"metadata\": {\"client\": \"docs-curl\", \"purpose\": \"sandbox-api-test\"},
+    \"idempotencyKey\": \"$create_key\",
+    \"policy\": {\"resumeOnAccess\": false}
+  }")"
+instance_id="$(jq -er '.id' <<<"$create_json")"
+printf 'instance=%s\n' "$instance_id"
+
+for _ in $(seq 1 90); do
+  detail="$(curl -fsS "$base_url/v1/sandboxes/$instance_id" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  state="$(jq -r '.observedState' <<<"$detail")"
+  [[ "$state" == "RUNNING" ]] && break
+  [[ "$state" == "FAILED" || "$state" == "TERMINATED" ]] && {
+    jq . <<<"$detail"; exit 1;
+  }
+  sleep 2
+done
+[[ "${state:-}" == "RUNNING" ]] || { echo "RUNNING timeout" >&2; exit 1; }
+
+exec_json="$(curl -fsS -X POST "$base_url/v1/sandboxes/$instance_id/commands" \
+  -H "XAPI-Key: $XAPI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"python3 -c \"print(6 * 7)\"","timeoutSeconds":60}')"
+jq -e '.exitCode == 0 and (.stdout | contains("42"))' <<<"$exec_json" >/dev/null
+
+cleanup
+trap - EXIT INT TERM
+
+for _ in $(seq 1 90); do
+  final_json="$(curl -fsS "$base_url/v1/sandboxes/$instance_id" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  final_state="$(jq -r '.observedState' <<<"$final_json")"
+  [[ "$final_state" == "TERMINATED" || "$final_state" == "FAILED" ]] && break
+  sleep 2
+done
+jq '{id,observedState,totalCost,auditCounts}' <<<"$final_json"
+[[ "$final_state" == "TERMINATED" || "$final_state" == "FAILED" ]]
+
+# Read the audit only after the terminal state; before that, usage segments/billing periods may still be open and can't serve as settlement evidence.
+for _ in $(seq 1 30); do
+  operations="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=operations&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  events="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=events&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  usage="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=usageSegments&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+  billing="$(curl -fsS "$base_url/v1/sandboxes/$instance_id/audit?kind=billingPeriods&page=1&pageSize=100" \
+    -H "XAPI-Key: $XAPI_KEY")"
+
+  if jq -e 'any(.items[]; .type == "TERMINATE" and .status == "SUCCEEDED")' <<<"$operations" >/dev/null \
+    && jq -e 'any(.items[]; .currentState == "TERMINATED" or .currentState == "FAILED")' <<<"$events" >/dev/null \
+    && jq -e '(.total > 0) and all(.items[]; .endsAt != null and .status != "OPEN")' <<<"$usage" >/dev/null \
+    && jq -e '(.total > 0) and all(.items[]; .endedAt != null and .status != "RESERVED")' <<<"$billing" >/dev/null; then
+    break
+  fi
+  sleep 2
+done
+
+jq -e 'any(.items[]; .type == "TERMINATE" and .status == "SUCCEEDED")' <<<"$operations" >/dev/null
+jq -e 'any(.items[]; .currentState == "TERMINATED" or .currentState == "FAILED")' <<<"$events" >/dev/null
+jq -e '(.total > 0) and all(.items[]; .endsAt != null and .status != "OPEN")' <<<"$usage" >/dev/null
+jq -e '(.total > 0) and all(.items[]; .endedAt != null and .status != "RESERVED")' <<<"$billing" >/dev/null
+
+active_json="$(curl -fsS "$base_url/v1/sandbox-history?state=ACTIVE&page=1&pageSize=100" \
+  -H "XAPI-Key: $XAPI_KEY")"
+jq -e --arg id "$instance_id" 'all(.items[]; .id != $id)' <<<"$active_json" >/dev/null
+printf 'audit and cleanup verified for %s; totalCost=%s\n' \
+  "$instance_id" "$(jq -r '.totalCost' <<<"$final_json")"
+```
+
+</Accordion>
+
+## Recommended: the safe CLI wrapper
+
+If you only want to check that Sandbox can run commands, use the CLI first. It already wraps quoting, waiting and finally cleanup:
+
+```bash
+XAPI_SANDBOX_HOST=sandbox.xapi.to \
+npx xapi-to sandbox run \
+  --capabilities exec,files \
+  --max-hourly-usd 0.20 \
+  --command 'python3 -c "print(6 * 7)"' \
+  --format pretty
+```
+
+Success means more than stdout containing `42`. Also confirm `cleanup.state`, `finalState`, `totalCost`
+and the matching operation and billing period records in the Console.
+
+## Common errors
+
+| Status | Meaning | What to do |
+| --- | --- | --- |
+| `400` | Invalid parameters or no compatible spec | Check the offerings again, ask for fewer capabilities or adjust the budget |
+| `401` | API key missing or invalid | Check the auth box / request header; don't put the key in the URL |
+| `402` | Insufficient balance or key limit | Top up the test account or raise the key's limit |
+| `409` | The current state doesn't allow the operation | Check the instance state and wait for the in-progress state change to finish |
+| `429` | Creating too often | Don't create in a loop; reuse the same idempotencyKey and back off |
+
+<Info>
+  For the combined OpenAI Agents SDK + DeepSeek flow, continue with
+  [AI + Sandbox Agent](/en/sandbox/openai-agents).
+</Info>

@@ -1,0 +1,327 @@
+---
+title: Sandbox CLI guide
+subtitle: Use xapi-to to quote, create, execute, manage files and ports, control the lifecycle, and read history and audit records.
+---
+
+`xapi-to sandbox` gives agents and automation scripts machine-readable Sandbox lifecycle commands.
+Regular output is JSON by default; use `--format pretty` or `--format table` for easier reading.
+
+## Installation and key
+
+```bash
+# No global install needed
+npx xapi-to sandbox --help
+
+# Or install it as a global command
+npm install -g xapi-to
+```
+
+We recommend saving an existing key from standard input so it doesn't end up in your shell history:
+
+```bash
+npx xapi-to config set apiKey=-
+# Paste the key, then press Ctrl-D
+
+npx xapi-to config show   # Shows only the masked key
+npx xapi-to config health
+```
+
+The CLI reads the key in this order: `XAPI_KEY` → `XAPI_API_KEY` → `~/.xapi/config.json`.
+
+## Choose an environment
+
+The production Sandbox Gateway defaults to `sandbox.xapi.to`. For the test Sandbox, use:
+
+```bash
+export XAPI_SANDBOX_HOST=sandbox.test.xapi.to
+```
+
+You can also pass it for a single command:
+
+```bash
+npx xapi-to sandbox offerings \
+  --host sandbox.test.xapi.to \
+  --format table
+```
+
+<Warning>
+  `test.xapi.to` is the test site's Console; the actual host for the Sandbox API is
+  `sandbox.test.xapi.to`. There is currently no `test.xapi.ai` or `ai.test.xapi.to` AI Gateway;
+  see [Test environment and logs](/en/sandbox/testing).
+</Warning>
+
+## Run in one step (recommended)
+
+`sandbox run` runs these steps in order:
+
+```text
+quote → create → wait RUNNING → exec → terminate → wait TERMINATED → read cost
+```
+
+```bash
+npx xapi-to sandbox run \
+  --command 'python3 -c "print(6 * 7)"' \
+  --max-hourly-usd 0.20 \
+  --format pretty
+```
+
+You can also pass everything after a bare `--` as the command:
+
+```bash
+npx xapi-to sandbox run -- node --version
+```
+
+Key output fields to check:
+
+- `result.exitCode / stdout / stderr`: the remote execution result;
+- `cleanup.operationStatus / state`: the cleanup operation and the server-side terminal state;
+- `finalState`: should be `TERMINATED`, or the provider terminal state `FAILED`;
+- `totalCost`: the cost settled by the server, not a number the client estimates from wall-clock time.
+
+When the remote command exits non-zero, the CLI first cleans up the instance, then maps the non-zero status to the local process exit code.
+`SIGINT` and `SIGTERM` also trigger cleanup.
+
+<Warning>
+  `--keep` skips automatic termination, so the instance keeps billing. Use it only when you clearly need to keep the workspace, and record
+  the instance ID and who is responsible for cleaning it up later.
+</Warning>
+
+## Full JavaScript demo
+
+The CLI source repository includes a standalone demo script that doesn't need an existing instance ID. It walks through the direct HTTP API,
+the latest local CLI, and the OpenAI Agents SDK + `ai.xapi.to` DeepSeek + xAPI Sandbox, in that order:
+
+```bash
+cd xapi-cli
+bun install --frozen-lockfile
+
+# Production Sandbox key; by default sent only to sandbox.xapi.to and its controlled provider subdomains
+read -s XAPI_SANDBOX_KEY && export XAPI_SANDBOX_KEY
+export XAPI_SANDBOX_HOST=sandbox.xapi.to
+
+# The OpenAI/DeepSeek scenario also needs a production ai.xapi.to key
+read -s XAPI_AI_KEY && export XAPI_AI_KEY
+
+# Run all three flows
+npm run demo:sandbox
+
+# Or run just one of them
+npm run demo:sandbox -- api
+npm run demo:sandbox -- cli
+npm run demo:sandbox -- openai
+
+unset XAPI_SANDBOX_KEY XAPI_SANDBOX_HOST XAPI_AI_KEY
+```
+
+The default target is the production Sandbox. The direct API and CLI scenarios use `XAPI_SANDBOX_KEY`; in the OpenAI scenario the
+compute layer still uses that production key, while the model layer uses `XAPI_AI_KEY` to call the production `ai.xapi.to`. To use the test
+Sandbox you must explicitly set `XAPI_SANDBOX_HOST=sandbox.test.xapi.to` and switch to a test key. The final report shows
+a masked preview and the source of each of the two credentials. Each flow quotes, creates, verifies and terminates its own instance; the final JSON
+verifies the marker, `TERMINATED`, successful operations, settled usage and bills, the server-side cost and zero active instances on the account.
+
+## Check the catalog, then quote
+
+```bash
+# See resources, capabilities, lifecycle and prices live
+npx xapi-to sandbox offerings --format table
+
+# Quote by capability and budget; does not create an instance
+npx xapi-to sandbox quote \
+  --capabilities exec,files \
+  --cpu 2 \
+  --memory 4 \
+  --max-hourly-usd 0.20 \
+  --format pretty
+```
+
+`--format table` is handy for comparing specs quickly; truncated cells end with `…`. To copy a full
+`quoteId`, instance ID or nested rate details, use the default JSON or `--format pretty`.
+
+Common selection flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--provider auto\|daytona\|cf-edge\|e2b\|runpod\|runloop\|modal\|vc-sandbox` | Automatic selection or a pinned provider |
+| `--capabilities exec,files,ports` | Required standard capabilities |
+| `--cpu / --memory / --volume` | Minimum CPU, memory in GiB, volume in GiB |
+| `--gpu-count / --gpu-model` | GPU count and model |
+| `--regions a,b` | Allowed regions |
+| `--requirements '<json>'` | Full requirements object |
+| `--max-hourly-usd` | Hard hourly price cap checked before create |
+
+Every subcommand has its own help, for example `xapi-to sandbox create --help` and
+`xapi-to sandbox run --help`. The CLI rejects unknown flags before sending a request, so a misspelled flag is never silently ignored.
+
+<Warning>
+  `--offering-id` selects an exact spec and can't be used together with `--max-hourly-usd`. When you need price protection,
+  use the requirements flags to trigger a capped quote, or use a `quoteId` whose price you've already checked.
+</Warning>
+
+Pinning a provider derives a controlled host, for example `daytona-sandbox.sandbox.xapi.to` in production. The CLI only sends the Sandbox key to
+`*.xapi.to` or an explicit localhost, and doesn't accept arbitrary provider URLs. In production,
+`--provider daytona` / `e2b` resolve to the deployed
+`daytona-sandbox.sandbox.xapi.to` / `e2b-sandbox.sandbox.xapi.to` respectively; the test environment still uses
+`daytona.sandbox.test.xapi.to` / `e2b.sandbox.test.xapi.to`.
+
+## Multi-step lifecycle
+
+When an agent needs to keep state across several file and command calls, use the fine-grained commands:
+
+```bash
+set -euo pipefail
+
+box_json="$(npx xapi-to sandbox create \
+  --capabilities exec,files \
+  --max-hourly-usd 0.20 \
+  --idempotency-key "ci-${CI_JOB_ID:-manual}" \
+  --wait)"
+box_id="$(printf '%s' "$box_json" | jq -r '.id')"
+
+cleanup() {
+  npx xapi-to sandbox terminate "$box_id" --wait-timeout 5m || true
+}
+trap cleanup EXIT INT TERM
+
+npx xapi-to sandbox file write "$box_id" TASK.md --file ./TASK.md
+npx xapi-to sandbox exec "$box_id" \
+  --command 'npm ci && npm test' \
+  --timeout 600
+npx xapi-to sandbox file read "$box_id" report.json --output ./report.json
+```
+
+`--idempotency-key` should come from a stable business task ID. If a response is lost, don't retry the create with a freshly generated key;
+the first request may already have created a billed instance, so check the history first.
+
+On a successful create, the CLI returns `clientIdempotencyKey`. If the instance was created but waiting with `--wait` fails,
+the structured error includes `instanceId`, `observedState`, `clientIdempotencyKey`, and the matching
+`get`/`terminate` recovery commands, so a lost instance doesn't keep billing.
+
+## Commands and working directory
+
+```bash
+npx xapi-to sandbox exec <id> \
+  --command 'pytest -q' \
+  --cwd /workspace/project \
+  --timeout 300
+
+# Positional shorthand
+npx xapi-to sandbox exec <id> -- npm test
+```
+
+It returns `exitCode`, `stdout`, `stderr` and the duration. Don't decide success just by searching stdout for text;
+check the exit code too, and read the generated artifacts when needed.
+
+## Files and artifacts
+
+```bash
+# Write text or a local file
+npx xapi-to sandbox file write <id> instructions.txt --content 'Run tests.'
+npx xapi-to sandbox file write <id> input.zip --file ./input.zip
+
+# List and read
+npx xapi-to sandbox file list <id> --path . --depth 3
+npx xapi-to sandbox file read <id> report.json
+npx xapi-to sandbox file read <id> output.zip --output ./output.zip
+```
+
+The CLI transfers local binary files as base64. `--output` uses "create new file only" semantics and refuses to overwrite
+an existing local path.
+
+## Web previews and ports
+
+First confirm in the Offering that both `backgroundExec` and `ports` are supported. Once the service in the instance listens on `0.0.0.0`,
+you can get a temporary public address:
+
+```bash
+npx xapi-to sandbox create \
+  --provider daytona \
+  --capabilities exec,backgroundExec,ports \
+  --wait
+
+npx xapi-to sandbox exec <id> --provider daytona --background --command \
+  'python3 -m http.server 25319 --bind 0.0.0.0'
+
+npx xapi-to sandbox port <id> 25319 --provider daytona
+```
+
+Don't emulate the standard background capability with `nohup ... &`: some providers reap child processes when the foreground exec session ends.
+A background command returning a session/command ID only means it was accepted. After you get the URL, still send the
+`headers` from the port response (if any), request it from outside and verify the expected marker. A returned URL doesn't mean DNS, TLS and the app are
+ready; use bounded retries, and terminate the instance even if they fail. The temporary URL stops working after termination.
+
+## Suspend and resume
+
+First check the Offering's `lifecycle.suspension` declaration:
+
+```bash
+npx xapi-to sandbox offerings --format pretty
+npx xapi-to sandbox suspend <id>
+npx xapi-to sandbox get <id>
+npx xapi-to sandbox resume <id>
+```
+
+The Offering declares separately whether the file system, memory and processes are kept. Don't assume all runtime state survives just because
+a provider supports "pause". Suspending may lower compute cost, but go by the live bill.
+
+## GPU and provider extensions
+
+A managed GPU Offering may not expose a standard shell and instead return connection info through an extension:
+
+```bash
+npx xapi-to sandbox quote \
+  --gpu-count 1 \
+  --max-hourly-usd 2.00
+
+npx xapi-to sandbox create \
+  --provider runpod \
+  --gpu-count 1 \
+  --max-hourly-usd 2.00 \
+  --wait
+
+npx xapi-to sandbox extension <id> runpod.connection_info --input '{}'
+npx xapi-to sandbox terminate <id> --provider runpod
+```
+
+Extension IDs must come from the Offering's `capabilities.extensionIds`; don't guess undeclared extensions.
+
+## History, logs and billing
+
+```bash
+# Current instance details
+npx xapi-to sandbox get <id> --format pretty
+
+# The four full audit streams
+npx xapi-to sandbox audit <id> --kind operations
+npx xapi-to sandbox audit <id> --kind events
+npx xapi-to sandbox audit <id> --kind usageSegments
+npx xapi-to sandbox audit <id> --kind billingPeriods
+
+# Paginated history, filterable by state, time and text
+npx xapi-to sandbox history \
+  --state HISTORY \
+  --search <instance-id-or-provider> \
+  --page 1 \
+  --page-size 100
+```
+
+The single entry point in the Console is **Console → Sandboxes**:
+
+- **Monitoring**: concurrency, create rate and spend;
+- **Instances**: current and past instances;
+- **Call logs**: CREATE, EXEC, FILE, PORT and state operations across instances.
+
+For test environment entry points and how logs are split, see [Test environment and logs](/en/sandbox/testing).
+
+## Recovery after an interruption
+
+`SIGKILL`, a machine losing power or a network partition can't run your local `finally`. Once you're reconnected:
+
+```bash
+npx xapi-to sandbox list --format table
+npx xapi-to sandbox history --state ACTIVE --page-size 100
+npx xapi-to sandbox get <suspected-id>
+npx xapi-to sandbox terminate <suspected-id> --wait-timeout 5m
+```
+
+If terminate returns a state conflict, another state operation is still in progress; read the server-side state first, then retry once the transition
+finishes. The final word is `observedState` and the bill's terminal state.

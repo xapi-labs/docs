@@ -1,0 +1,111 @@
+---
+title: Hermes Agent
+subtitle: Connect Hermes Agent by Nous Research to xAPI. Configure a custom endpoint with the hermes config command.
+---
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is a self-improving AI agent
+by Nous Research. It can be configured with any OpenAI-compatible endpoint through CLI commands.
+xAPI accepts `Authorization: Bearer`, which is fully compatible with Hermes's default behavior.
+
+<Warning>
+  Hermes requires the selected model to have a context window of **at least 64K tokens**.
+  The Claude / GPT-5 series that xAPI supports by default all meet this requirement.
+</Warning>
+
+<Steps>
+  <Step title="Install">
+    Follow the official Hermes docs:
+    [hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/).
+  </Step>
+
+  <Step title="Create an API Key">
+    Go to the [xapi.to](https://xapi.to) console → **API Keys** → create a new key.
+    The key looks like `sk-xapi-...`.
+  </Step>
+
+  <Step title="Configure (interactive or command-based)">
+    <Tabs>
+      <Tab title="Interactive">
+        ```bash
+        hermes model
+        ```
+
+        In the provider menu, choose **Custom Endpoint** and enter the following when prompted:
+
+        | Prompt | Input |
+        | --- | --- |
+        | Base URL | `https://ai.xapi.to/v1` |
+        | API Key | `sk-xapi-...` |
+        | Model | `claude-opus-4-7` (or another model that xAPI supports) |
+      </Tab>
+
+      <Tab title="Command-based">
+        ```bash
+        hermes config set model claude-opus-4-7
+        hermes config set OPENAI_BASE_URL "https://ai.xapi.to/v1"
+        hermes config set OPENAI_API_KEY "sk-xapi-..."
+        ```
+
+        Values are written to the matching file automatically:
+
+        - **Secrets** (`OPENAI_API_KEY` and so on): `~/.hermes/.env`
+        - **Regular settings** (`model`, `OPENAI_BASE_URL` and so on): `~/.hermes/config.yaml`
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Start and verify">
+    ```bash
+    hermes --tui
+    ```
+
+    In the TUI, check that:
+    - The model at the top shows `claude-opus-4-7`
+    - Sending "hi" gets a reply = the setup works
+
+    You can see this call in the console → Usage Records.
+  </Step>
+</Steps>
+
+## Pin to a specific upstream (optional)
+
+Change `OPENAI_BASE_URL`:
+
+| Upstream | base URL |
+| --- | --- |
+| SkyAPI (widest model selection) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max (official source) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken reverse-engineered (lowest cost) | `https://supertoken.p.xapi.to/v1` |
+
+## Switching models
+
+```bash
+hermes config set model claude-sonnet-4-6
+```
+
+For the list of available models, see [Models and pricing](/en/ai/models). Hermes requires a context of at least 64K,
+and all xAPI default models meet it.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Model context too small">
+    Hermes requires the model's `contextWindow ≥ 64000`. If you're told the model doesn't meet it,
+    switch to a large-context model (`claude-opus-4-7`, `claude-sonnet-4-6`, etc.).
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    The key written by `hermes config set OPENAI_API_KEY` didn't take effect.
+    Check the value in `~/.hermes/.env`.
+  </Accordion>
+
+  <Accordion title="404 Not Found">
+    `OPENAI_BASE_URL` is missing the `/v1` suffix.
+    The correct format is `https://ai.xapi.to/v1`.
+  </Accordion>
+
+  <Accordion title="Keeping self-improved skills">
+    Hermes stores skills locally and doesn't upload them to xAPI.
+    Switching the base URL **doesn't affect** the skills and conversation history you've built up.
+  </Accordion>
+</AccordionGroup>

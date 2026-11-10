@@ -1,0 +1,111 @@
+---
+title: Codex
+subtitle: Connect the OpenAI Codex CLI to xAPI. Two environment variables, direct connection to the SkyAPI upstream.
+---
+
+[Codex](https://github.com/openai/codex) is OpenAI's official command-line coding agent,
+built on the OpenAI Chat Completions protocol. xAPI accepts the `Authorization: Bearer` authentication header,
+which is fully compatible with Codex's default behavior, so you only need two environment variables.
+
+<Steps>
+  <Step title="Install">
+    ```bash
+    npm install -g @openai/codex
+    ```
+  </Step>
+
+  <Step title="Create an API Key">
+    Go to the [xapi.to](https://xapi.to) console → **API Keys** → create a new key.
+  </Step>
+
+  <Step title="Set environment variables">
+    Add to `~/.zshrc` or `~/.bashrc`:
+
+    ```bash
+    export OPENAI_BASE_URL="https://ai.xapi.to/v1"
+    export OPENAI_API_KEY="sk-xapi-..."
+    export OPENAI_DEFAULT_MODEL="gpt-5.5"
+    ```
+
+    Load the new environment:
+
+    ```bash
+    source ~/.zshrc
+    ```
+
+    <Note>
+      The Base URL must **end with `/v1`**. Codex requires it.
+      Internally, Codex authenticates with `Authorization: Bearer ${OPENAI_API_KEY}`,
+      and xAPI accepts this format as is.
+    </Note>
+  </Step>
+
+  <Step title="Verify">
+    ```bash
+    codex "Implement a Fibonacci function in Python"
+    ```
+
+    Once you see streaming output, you can view the call record in the [xapi.to](https://xapi.to) console → Usage Records.
+  </Step>
+</Steps>
+
+## Pin to a specific upstream (optional)
+
+Change `OPENAI_BASE_URL`:
+
+| Upstream | base URL |
+| --- | --- |
+| SkyAPI (widest model selection) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max (official source) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken reverse-engineered (lowest cost) | `https://supertoken.p.xapi.to/v1` |
+
+## Switching models
+
+Change `OPENAI_DEFAULT_MODEL`. SkyAPI adapts Anthropic Messages to the OpenAI protocol layer,
+so all of the following models can be called through the Chat Completions API:
+
+- `gpt-5.5`
+- `claude-opus-4-7` / `claude-sonnet-4-6` / `claude-haiku-4-5`
+
+For the full list, see [Models and pricing](/en/ai/models).
+
+## Per-project isolation
+
+To use xAPI only in specific projects, use [direnv](https://direnv.net/)
+and create `.envrc` in the project root:
+
+```bash
+export OPENAI_BASE_URL="https://ai.xapi.to/v1"
+export OPENAI_API_KEY="sk-xapi-..."
+export OPENAI_DEFAULT_MODEL="gpt-5.5"
+```
+
+After you run `direnv allow`, the `codex` command in that directory uses xAPI.
+Everywhere else keeps the original configuration.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="404 Not Found">
+    `OPENAI_BASE_URL` is missing the `/v1` suffix. The full format is `https://ai.xapi.to/v1`.
+  </Accordion>
+
+  <Accordion title='400 Model "xxx" is not configured for this endpoint'>
+    The default model isn't in the supported list of the selected upstream.
+    Change it to a name that exists in the [model list](/en/ai/models).
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    - Run `echo $OPENAI_API_KEY` to confirm the key is correct
+    - Check for spaces: `echo -n "$OPENAI_API_KEY" | wc -c`
+  </Accordion>
+</AccordionGroup>
+
+## Claude Code vs. Codex
+
+| Aspect | Claude Code | Codex |
+| --- | --- | --- |
+| Protocol | Anthropic Messages | OpenAI Chat Completions |
+| Endpoint | `ai.xapi.to` (aggregated) | `{host}.ai.xapi.to` (direct) |
+| Automatic failover | Yes (across multiple upstreams) | No (single upstream) |
+| Best for | Letting the gateway pick the source automatically | Pinning a specific upstream explicitly |

@@ -1,0 +1,126 @@
+---
+title: Quickstart
+subtitle: Make your first call with curl. ai.xapi.to supports both the Anthropic and OpenAI protocols.
+---
+
+xAPI has one endpoint, `https://ai.xapi.to`, and it **supports both** the Anthropic Messages and
+OpenAI Chat Completions protocols. Pick the endpoint path that matches your client.
+
+Every endpoint accepts either of two authentication headers:
+
+```http
+x-api-key: sk-xapi-...            # Anthropic SDK default
+Authorization: Bearer sk-xapi-... # OpenAI SDK default
+```
+
+<Steps>
+  <Step title="Create an API key">
+    Open the [xapi.to](https://xapi.to) console and create a key on the **API Keys** page.
+
+    <Warning>
+      The key is shown only once, when you create it. Keep it safe: a lost key cannot be recovered,
+      only revoked and replaced with a new one.
+    </Warning>
+  </Step>
+
+  <Step title="Call Claude (Anthropic protocol)">
+    ```bash
+    curl https://ai.xapi.to/v1/messages \
+      -H "x-api-key: sk-xapi-..." \
+      -H "anthropic-version: 2023-06-01" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "claude-opus-4-7",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}]
+      }'
+    ```
+
+    <Tip>
+      `x-api-key` is the standard authentication header of the [official Anthropic API](https://platform.claude.com/docs/en/build-with-claude/working-with-messages),
+      so Claude Code and other official SDKs work with it out of the box.
+    </Tip>
+  </Step>
+
+  <Step title="Call GPT-5.5 (OpenAI protocol)">
+    ```bash
+    curl https://ai.xapi.to/v1/chat/completions \
+      -H "Authorization: Bearer sk-xapi-..." \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "gpt-5.5",
+        "messages": [{"role": "user", "content": "Hello"}]
+      }'
+    ```
+
+    <Tip>
+      The OpenAI SDK authenticates with `Authorization: Bearer` by default. Point `OPENAI_BASE_URL`
+      at `https://ai.xapi.to/v1`, set `OPENAI_API_KEY` to `sk-xapi-...`,
+      and it works with no extra configuration.
+    </Tip>
+  </Step>
+
+  <Step title="Routing strategies">
+    Switch the routing priority with a URL path prefix. This **does not change the request or response body**:
+
+    | Path prefix | Strategy |
+    | --- | --- |
+    | `ai.xapi.to/v1/...` (default) | quality — official sources and high-SLA upstreams first |
+    | `ai.xapi.to/speed/v1/...` | speed — lowest current latency |
+    | `ai.xapi.to/cost/v1/...` | cost — lowest current price |
+
+    Example:
+
+    ```bash
+    curl https://ai.xapi.to/cost/v1/messages \
+      -H "x-api-key: sk-xapi-..." \
+      -H "anthropic-version: 2023-06-01" \
+      -d '{ "model": "claude-opus-4-7", ... }'
+    ```
+  </Step>
+
+  <Step title="Streaming responses">
+    Set `"stream": true` in the request body:
+
+    ```bash
+    curl https://ai.xapi.to/v1/messages \
+      -H "x-api-key: sk-xapi-..." \
+      -H "anthropic-version: 2023-06-01" \
+      -H "Content-Type: application/json" \
+      -N \
+      -d '{"model":"claude-opus-4-7","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"Tell me a joke"}]}'
+    ```
+
+    <Note>
+      Streaming responses do **not** return the final `X-AI-Cost` in the response headers,
+      because the headers are already sent to the client when the stream starts.
+      To see the cost, go to Console → Usage Records.
+    </Note>
+  </Step>
+</Steps>
+
+## Response headers
+
+| Header | Meaning |
+| --- | --- |
+| `X-AI-Cost` | Amount charged for this request (USD, 8 decimal places; only on successful non-streaming responses) |
+| `X-AI-Tokens-Input` / `Output` / `Total` | Token usage |
+| `X-Routing-Provider` | ID of the upstream that actually served the request |
+| `X-Routing-Attempts` | Number of attempts (>1 means an automatic failover happened) |
+| `X-Routing-Fallback` | Whether a fallback upstream was used |
+| `X-XAPI-Source` | `provider` (upstream response) or `platform` (gateway-layer error) |
+| `X-XAPI-Request-Id` | Platform request ID; include it in support tickets when troubleshooting |
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="IDE / CLI integrations" href="/en/ai/integrations/claude-code" icon="terminal">
+    Claude Code · Codex · Cursor and more
+  </Card>
+  <Card title="Model list" href="/en/ai/models" icon="coins">
+    Price comparison across upstreams
+  </Card>
+  <Card title="API reference" href="/en/ai/api" icon="code">
+    All endpoints and fields
+  </Card>
+</CardGroup>

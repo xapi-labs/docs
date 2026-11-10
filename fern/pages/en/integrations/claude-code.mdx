@@ -1,0 +1,114 @@
+---
+title: Claude Code
+subtitle: Connect Anthropic's official CLI to xAPI. Switch the base URL with environment variables, no code changes needed.
+---
+
+[Claude Code](https://docs.claude.com/en/docs/claude-code) is Anthropic's official command-line
+coding agent. It **natively** supports overriding the default base URL with the `ANTHROPIC_BASE_URL` environment variable.
+To connect to xAPI, use the aggregated routing endpoint `ai.xapi.to`. It speaks the Anthropic Messages protocol
+and fails over across upstreams automatically.
+
+<Steps>
+  <Step title="Install">
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    ```
+  </Step>
+
+  <Step title="Create an API Key">
+    Go to the [xapi.to](https://xapi.to) console → **API Keys** → create a new key.
+    The key looks like `sk-xapi-...`.
+  </Step>
+
+  <Step title="Set environment variables">
+    Add to `~/.zshrc` or `~/.bashrc`:
+
+    ```bash
+    export ANTHROPIC_BASE_URL="https://ai.xapi.to"
+    export ANTHROPIC_AUTH_TOKEN="sk-xapi-..."
+    ```
+
+    Load the new environment:
+
+    ```bash
+    source ~/.zshrc
+    ```
+
+    <Warning>
+      You must use `ANTHROPIC_AUTH_TOKEN`. **Do not** use `ANTHROPIC_API_KEY`.
+      The latter triggers Claude Code's official account check, and authentication fails.
+      If you set `ANTHROPIC_API_KEY` before, run `unset ANTHROPIC_API_KEY` first and restart the terminal.
+    </Warning>
+  </Step>
+
+  <Step title="Start and verify">
+    ```bash
+    claude
+    ```
+
+    Send any request. If you get a reply from a Claude model, the setup works.
+    In an interactive session, type `/status` to check that the current base URL is `ai.xapi.to`.
+  </Step>
+</Steps>
+
+## Routing strategy
+
+Change the base URL to switch the routing strategy:
+
+| Priority | base URL |
+| --- | --- |
+| Quality (default) | `https://ai.xapi.to` |
+| Speed | `https://ai.xapi.to/speed` |
+| Cost | `https://ai.xapi.to/cost` |
+
+## Switching models
+
+In a session, run:
+
+```
+/model claude-opus-4-7
+```
+
+Or set a default model before you start:
+
+```bash
+export ANTHROPIC_MODEL=claude-opus-4-7
+```
+
+For the list of available models, see [Models and pricing](/en/ai/models).
+
+## Per-project isolation
+
+To use xAPI only in specific projects, use [direnv](https://direnv.net/)
+and create `.envrc` in the project root:
+
+```bash
+export ANTHROPIC_BASE_URL="https://ai.xapi.to"
+export ANTHROPIC_AUTH_TOKEN="sk-xapi-..."
+```
+
+After you run `direnv allow`, the `claude` command in that directory uses xAPI.
+Everywhere else keeps the original configuration.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="401 authentication_error">
+    - Run `echo $ANTHROPIC_AUTH_TOKEN` to confirm the key is loaded correctly
+    - Run `unset ANTHROPIC_API_KEY` and restart the terminal
+  </Accordion>
+
+  <Accordion title="Requests still go to the official endpoint">
+    - The terminal hasn't loaded the new environment variables: reopen the terminal or run `source ~/.zshrc`
+    - Type `/status` in the session to see the current base URL
+  </Accordion>
+
+  <Accordion title='Model "xxx" is not configured for this endpoint'>
+    The current model isn't in the supported list of the upstream that handled the request. Run `/model claude-opus-4-7`
+    to switch to a [supported model](/en/ai/models), or use the `/cost` strategy so the gateway fuzzy-matches the model across upstreams.
+  </Accordion>
+
+  <Accordion title="count_tokens returns 404">
+    This endpoint isn't implemented yet. Claude Code falls back to a local tokenizer estimate automatically, so the main flow isn't affected.
+  </Accordion>
+</AccordionGroup>

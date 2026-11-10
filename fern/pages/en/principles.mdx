@@ -1,0 +1,91 @@
+---
+title: Design principles
+subtitle: Multi-source aggregation, protocol transparency, transparent billing and automatic failover are the core architecture choices behind xAPI.
+---
+
+## Multi-source upstream pool
+
+xAPI connects to official APIs, verified third-party relay services and reverse-engineered access channels at the same time,
+and exposes them through one unified entry point. The same model can be offered by several upstreams at different prices,
+for example `claude-opus-4-7`:
+
+| Upstream | Input (USD / 1M) | Output (USD / 1M) |
+| --- | --: | --: |
+| SkyAPI | $1.00 | $5.00 |
+| SuperToken Max (official source) | $2.00 | $10.00 |
+| SuperToken reverse channel | $0.65 | $3.30 |
+
+Under the `cost` strategy, the gateway automatically runs the request on the cheapest healthy upstream at that moment.
+The gateway absorbs the complexity of price differences across sources; the caller only sees the final settled amount.
+
+## Protocol transparency
+
+xAPI does not invent a new protocol. It is fully compatible with the two mainstream industry specifications:
+
+- **Anthropic Messages API** (`POST /v1/messages`): aggregated routing uses this protocol, so
+  Claude Code and other Anthropic SDKs connect by changing only `base_url`
+- **OpenAI Chat Completions** (`POST /v1/chat/completions`): each upstream is exposed on its own subdomain
+  and uses the upstream's native OpenAI protocol
+
+All request fields are passed through as-is (`stream`, `tools`, `tool_choice`, every `anthropic-*` protocol header and so on),
+so new provider parameters don't have to wait for gateway support. Response bodies never get xAPI-specific fields injected;
+all platform-level information is returned in response headers.
+
+## Transparent billing
+
+Every call is billed in two steps, **hold → settlement**, so heavy concurrency never leads to double charges or missed charges:
+
+<Steps>
+  <Step title="Request arrives">
+    An estimated amount is reserved based on the model's unit price.
+  </Step>
+  <Step title="Upstream responds">
+    The call is settled on actual token usage: any overcharge is refunded and any shortfall is charged.
+  </Step>
+</Steps>
+
+Error handling:
+
+- Upstream 4xx / 5xx / timeout → the hold is fully released
+- Client aborts a non-streaming request → the hold is fully released
+- Client aborts a streaming request → the charge is estimated from the output length so far
+
+Successful non-streaming responses return the USD amount, to 8 decimal places, in the `X-AI-Cost` header,
+together with `X-AI-Tokens-Input` / `Output` / `Total`, so you can reconcile every call right away.
+
+## Automatic failover
+
+When aggregated routing sees an upstream 5xx, 429 or timeout, it switches within milliseconds to the next healthy upstream
+in the candidate pool and finishes the current request there. Retries are transparent to the caller; the `X-Routing-Attempts` and
+`X-Routing-Fallback` response headers show the actual routing path of the request.
+
+Hardening underneath:
+
+- Upstream requests have a 2-minute connection timeout by default
+- 3xx redirects are not followed; the status code is passed straight through to the caller
+- DNS resolution and IP checks run before forwarding, to defend against SSRF and DNS rebinding attacks
+
+## Routing strategies
+
+Aggregated routing at `https://ai.xapi.to` takes the routing preference from a path prefix:
+
+| Path prefix | Strategy | Upstream selection |
+| --- | --- | --- |
+| `/quality` (default) | Quality first | Official sources and high-SLA upstreams first |
+| `/speed` | Speed first | The upstream with the lowest measured latency right now |
+| `/cost` | Cost first | The cheapest healthy upstream right now |
+| `/default` | Explicit default | Same as `/quality` |
+
+<Note>
+  Strategies only affect how the gateway selects an upstream; they **do not change** the request or response body.
+</Note>
+
+## Scope
+
+To keep the gateway layer simple and predictable, xAPI deliberately does not provide the following:
+
+- Caching of request or response content (the gateway layer passes everything through)
+- Injecting xAPI's own fields into response bodies (platform metadata is exposed only in headers)
+- Locked model names (each upstream keeps its own naming conventions; the gateway does case-insensitive fuzzy matching)
+- A custom protocol layer (it follows the Anthropic Messages / OpenAI Chat Completions specs exactly)
+- Plaintext API key storage (keys are cached as hashes, and upstream credentials are encrypted at rest)

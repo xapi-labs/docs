@@ -102,6 +102,7 @@ navigation:
             path: pages/sandbox/api-reference.mdx
             slug: api
           - api: API Reference
+            api-name: sandbox
             slug: api-reference
             icon: fa-solid fa-code
             paginated: true
@@ -145,8 +146,107 @@ navigation:
 
   - tab: en
     layout:
+      - section: Overview
+        slug: home
+        contents:
+          - page: Choose a product
+            path: pages/en/overview.mdx
+            slug: overview
+
+      - section: AI Gateway
+        slug: ai
+        contents:
+          - page: AI Gateway overview
+            path: pages/en/ai/overview.mdx
+            slug: overview
+          - page: Quickstart
+            path: pages/en/quickstart.mdx
+            slug: quickstart
+          - page: Models and pricing
+            path: pages/en/models.mdx
+            slug: models
+          - page: Design principles
+            path: pages/en/principles.mdx
+            slug: principles
+          - section: Developer tools
+            slug: integrations
+            contents:
+              - page: Claude Code
+                path: pages/en/integrations/claude-code.mdx
+                slug: claude-code
+              - page: Codex
+                path: pages/en/integrations/codex.mdx
+                slug: codex
+              - page: Cursor
+                path: pages/en/integrations/cursor.mdx
+                slug: cursor
+              - page: OpenClaw
+                path: pages/en/integrations/openclaw.mdx
+                slug: openclaw
+              - page: Hermes Agent
+                path: pages/en/integrations/hermes.mdx
+                slug: hermes
+              - page: Continue.dev
+                path: pages/en/integrations/continue-dev.mdx
+                slug: continue-dev
+              - page: Cline
+                path: pages/en/integrations/cline.mdx
+                slug: cline
+              - page: Windsurf
+                path: pages/en/integrations/windsurf.mdx
+                slug: windsurf
+              - page: Chatbox and other desktop clients
+                path: pages/en/integrations/chatbox.mdx
+                slug: chatbox
+          - page: AI API reference
+            path: pages/en/api.mdx
+            slug: api
+          - page: AI billing
+            path: pages/en/billing.mdx
+            slug: billing
+
+      - section: Sandbox
+        slug: sandbox
+        icon: fa-solid fa-cube
+        collapsed: open-by-default
+        contents:
+          - page: Overview and core concepts
+            path: pages/en/sandbox/overview.mdx
+            slug: overview
+          - page: CLI guide
+            path: pages/en/sandbox/cli.mdx
+            slug: cli
+          - page: REST API call flow
+            path: pages/en/sandbox/api-flow.mdx
+            slug: api-flow
+          - page: All REST APIs and testing
+            path: pages/en/sandbox/api-reference.mdx
+            slug: api
+          - api: API Reference
+            api-name: sandbox-en
+            slug: api-reference
+            icon: fa-solid fa-code
+            paginated: true
+            display-errors: true
+            playground:
+              environments:
+                - Production
+                - Test
+            layout:
+              - discovery
+              - lifecycle
+              - execution
+              - audit
+          - page: AI + Sandbox Agent
+            path: pages/en/sandbox/openai-agents.mdx
+            slug: openai-agents
+          - page: Test environment and logs
+            path: pages/en/sandbox/testing.mdx
+            slug: testing
+
       - section: For providers
         slug: provider
+        icon: fa-solid fa-store
         contents:
           - page: Provider onboarding
             path: pages/en/provider/overview.mdx
@@ -157,6 +257,13 @@ navigation:
           - page: Billing and earnings
             path: pages/en/provider/pricing.mdx
             slug: pricing
+
+      - section: Help
+        slug: help
+        contents:
+          - page: FAQ
+            path: pages/en/faq.mdx
+            slug: faq
 
 colors:
   accent-primary:
@@ -171,10 +278,10 @@ colors:
 
 navbar-links:
   - type: minimal
-    text: 官网
+    text: xapi.to
     url: https://xapi.to
   - type: filled
-    text: 获取 API Key →
+    text: API Key →
     url: https://xapi.to
 
 layout:

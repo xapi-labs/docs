@@ -1,0 +1,49 @@
+---
+title: Windsurf
+subtitle: Connect the Windsurf IDE to xAPI. Just override the OpenAI Base URL and API Key.
+---
+
+[Windsurf](https://codeium.com/windsurf) has a built-in OpenAI-compatible client. Override the base URL
+and API Key to connect to xAPI. xAPI accepts `Authorization: Bearer` authentication, which is compatible with Windsurf's
+default behavior.
+
+## Configuration
+
+Open Windsurf → Settings → Cascade settings and find the Provider configuration:
+
+| Field | Value |
+| --- | --- |
+| Base URL | `https://ai.xapi.to/v1` |
+| API Key | `sk-xapi-...` |
+| Model | `claude-opus-4-7` or another model in the [model list](/en/ai/models) |
+
+<Warning>
+  The Base URL must **end with `/v1`**.
+</Warning>
+
+## Verify
+
+Send a test request in the Cascade panel and confirm you get a streaming reply.
+You can look up this call in the [xapi.to](https://xapi.to) console → Usage Records.
+
+## Pin to a specific upstream (optional)
+
+Just change the Base URL. For each upstream's subdomain, see [Models and pricing](/en/ai/models).
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Model not supported / model not found">
+    Change to a model explicitly listed in the [model list](/en/ai/models),
+    and mind the naming convention (SkyAPI uses hyphens).
+  </Accordion>
+
+  <Accordion title="Some features still go through Codeium">
+    Windsurf's Supercomplete (code completion) goes through Codeium's own service.
+    No third-party gateway can take it over. The base URL override applies only to Cascade Chat and other explicit AI features.
+  </Accordion>
+
+  <Accordion title="Checking costs">
+    Costs are not shown in Windsurf. Go to the [xapi.to](https://xapi.to) console → Usage Records.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,219 @@
+---
+title: Test environment and Console logs
+subtitle: Tell test.xapi.to, sandbox.test.xapi.to and ai.xapi.to apart precisely, and accept real calls based on server-side evidence.
+---
+
+A Sandbox test must answer three questions: which environment the request hits, which account it uses, and which
+Console to check for logs. A successful page or command stdout alone does not prove that the instance was cleaned up and the bill was settled.
+
+## Environment matrix
+
+| Feature | Test environment | Production | Notes |
+| --- | --- | --- | --- |
+| Web / Console | `https://test.xapi.to` | `https://www.xapi.to` | The test site may be access-protected |
+| Sandbox Gateway | `https://sandbox.test.xapi.to` | `https://sandbox.xapi.to` | CLI `--host` points here |
+| Fixed-provider Sandbox | `{provider}.sandbox.test.xapi.to` | `{provider}.sandbox.xapi.to` | Derived safely by the CLI/Gateway |
+| AI Gateway | **No test domain yet** | `https://ai.xapi.to` | DeepSeek and other model requests go through the production AI Gateway |
+
+<Warning>
+  `test.xapi.ai` is not an xAPI test domain, and `ai.test.xapi.to` is not served yet either. The correct test site is
+  `test.xapi.to`, and the correct test Sandbox API is `sandbox.test.xapi.to`.
+</Warning>
+
+## Always label the test type
+
+### Sandbox-only test
+
+```bash
+XAPI_SANDBOX_HOST=sandbox.test.xapi.to \
+  npx xapi-to sandbox run --command 'echo SANDBOX_TEST_OK'
+```
+
+All compute, lifecycle, Sandbox audit and Sandbox billing happen in the test environment. This test does not call a model.
+
+### OpenAI Agents mixed-environment test
+
+```text
+OpenAI SandboxAgent
+  ├─ model: ai.xapi.to → DeepSeek                 (production AI environment)
+  └─ compute: sandbox.test.xapi.to → Daytona     (test Sandbox environment)
+```
+
+This is the actual boundary of the current OpenAI Sandbox Agents SDK E2E. It can prove that DeepSeek tool calling and
+the test Sandbox adapter work together, but it cannot prove a fully isolated "test AI Gateway + test Sandbox"
+path, because a test AI Gateway does not exist yet.
+
+## Which account is used
+
+For ordinary CLI Sandbox commands, the effective key precedence is:
+
+```text
+XAPI_KEY → XAPI_API_KEY → ~/.xapi/config.json
+```
+
+Before acceptance, run:
+
+```bash
+npx xapi-to config show
+npx xapi-to balance
+```
+
+`config show` only shows the masked key and its source. If an environment variable overrides the config file, the CLI uses the account
+for that environment variable. Don't infer the actual account from "the key I just pasted"; rely on `config show` and the
+key name/last characters in the Console.
+
+The OpenAI SandboxAgent mixed environment should keep the two credentials explicitly separate:
+
+| Environment variable | Sent to | Typical account |
+| --- | --- | --- |
+| `XAPI_SANDBOX_KEY` | `sandbox.test.xapi.to` | Sandbox test account |
+| `XAPI_AI_KEY` | `ai.xapi.to` | Production AI Gateway account |
+
+Don't infer from the fact that a Sandbox test key can create instances that it also has production AI Gateway permissions. The acceptance report
+should record each key's masked preview and source separately, and make sure the full key never enters the report, the prompt or the Sandbox.
+
+<Tip>
+  Every acceptance report should record the masked key preview, account environment, Sandbox host, model gateway, model,
+  provider and run time, but must never record a full key.
+</Tip>
+
+## View logs in the Console
+
+### Test Sandbox logs
+
+Open [test.xapi.to Console → Sandboxes](https://test.xapi.to/console?tab=sandbox):
+
+1. **Monitoring**: check concurrent instances and spending trends;
+2. **Instances**: find resources by instance ID, provider and time;
+3. **Call logs**: see CREATE, EXEC, FILE, PORT, SUSPEND, RESUME, TERMINATE;
+4. Expand the instance details and check operations, events, usage segments and the settlement ledger.
+
+Times may be shown in the browser's local time zone, while JSON reports usually use UTC ISO times. When comparing, use both the
+instance ID and the order of operations; don't rely on matching the hour by eye.
+
+### DeepSeek model logs
+
+Calls that use `ai.xapi.to` are shown in
+[Production Console → AI Logs](https://www.xapi.to/console?tab=aiLogs). You can filter by:
+
+- API key name;
+- Provider = `DeepSeek`;
+- Model = `deepseek-v4-pro`;
+- Time range and status code;
+
+One agent task usually produces several model calls: the initial planning, the next round of reasoning after each tool result is sent back,
+and the final answer. So "one user task" does not necessarily mean "one AI Log entry".
+
+## Single-scenario acceptance checklist
+
+Every scenario that creates an instance should verify at least:
+
+1. Quote returns the Offering, price and expiry, and does not exceed the cap set for the test;
+2. Create returns an instance ID, and the instance eventually reaches `RUNNING`;
+3. The real capability is exercised, for example a command exit code, file contents or a public URL marker;
+4. Operation logs record the input summary, status, duration and output preview;
+5. State events cover at least `PROVISIONING → RUNNING → TERMINATED`;
+6. All usageSegments are closed, with no leftover segment where `endsAt = null`;
+7. All billingPeriods reach a terminal state, and `totalCost` matches the settlement total;
+8. After the terminate request, keep waiting for the server-side `TERMINATED`;
+9. The final `history --state ACTIVE` does not include this instance;
+10. The report contains no API keys, provider secrets or other credentials.
+
+## Playground/CLI multi-scenario acceptance
+
+The `xapi-cli` repository provides a real multi-scenario script:
+
+```bash
+cd xapi-cli
+npm run build
+
+npm run test:sandbox:playground -- \
+  --host sandbox.test.xapi.to
+```
+
+Scenarios covered:
+
+- Catalog, capabilities and budget quotes;
+- One-off code execution;
+- AI coding tasks;
+- CI reproduction and fix;
+- Data upload, analysis and report retrieval;
+- Separate instances for multiple agents;
+- Cloudflare web preview and external URL verification;
+- Suspend, resume and file retention;
+- GPU Offerings and connection info;
+- Operation, event, usage, billing and history checks, plus a final zero-active-instance check.
+
+Rerun selected scenarios or skip the costly GPU ones:
+
+```bash
+npm run test:sandbox:playground -- \
+  --host sandbox.test.xapi.to \
+  --only 8,9
+
+npm run test:sandbox:playground -- \
+  --host sandbox.test.xapi.to \
+  --skip-gpu
+```
+
+<Note>
+  Insufficient GPU capacity, provider quotas or HTTP 402 are failures of external prerequisites; they do not mean the scenario passed. Keep the
+  failure evidence from this run and the latest real successful report; don't substitute page-structure tests or mocks for real resource requests.
+</Note>
+
+## OpenAI SandboxAgent acceptance
+
+```bash
+cd xapi-cli
+
+export XAPI_SANDBOX_KEY='sk-sandbox-test-...'
+export XAPI_AI_KEY='sk-ai-production-...'
+
+npm run test:sandbox:openai -- \
+  --host sandbox.test.xapi.to \
+  --provider daytona \
+  --model deepseek-v4-pro
+
+unset XAPI_SANDBOX_KEY XAPI_AI_KEY
+```
+
+Pass conditions include:
+
+- The `ai.xapi.to` DeepSeek probe returns the expected marker;
+- `SandboxAgent` actually produces Shell tool calls;
+- The Daytona instance writes and reads the Sandbox marker;
+- `execCount` is high enough to prove the model did not simply make up the result;
+- `shellMarkerSeen = true`;
+- The instance's terminal state is `TERMINATED`;
+- operations, events, usageSegments and billingPeriods all have evidence;
+- `activeInstances = 0`;
+- The JSON report contains no keys.
+
+## Current test gaps
+
+| Gap | Impact | Done when |
+| --- | --- | --- |
+| No test AI Gateway | The SDK E2E is a mixed environment of production AI + test Sandbox | A separate AI test domain, routing, accounts and log store exist |
+| OpenAI adapter only verified with an empty Manifest + Shell | Can't yet claim support for mounts/snapshots/env materialization | The mappings are implemented, with real positive and negative cases added |
+| GPU depends on live capacity and account quota | The full acceptance suite may fail on external prerequisites | A dedicated, available test GPU quota, or an explicit conditional gate |
+| Cloudflare public preview has a DNS/TLS readiness window | "Got a URL" can't be treated as web success | The external HTTP marker returns 200 within bounded retries |
+| The local dev site and the test site are easy to confuse | The page may come from localhost while data goes to the remote test API | Reports and the UI clearly show the environment and Gateway host |
+
+<Warning>
+  Until the gaps above are closed, reports should use precise wording: "Sandbox test E2E passed" or
+  "OpenAI Agent mixed-environment E2E passed", not "full test.xapi.to path passed".
+</Warning>
+
+## Mandatory cleanup after a failure
+
+```bash
+export XAPI_SANDBOX_HOST=sandbox.test.xapi.to
+
+npx xapi-to sandbox history --state ACTIVE --page-size 100 --format table
+npx xapi-to sandbox get <id> --format pretty
+npx xapi-to sandbox terminate <id> --wait-timeout 5m
+npx xapi-to sandbox history --state ACTIVE --page-size 100 --format table
+```
+
+The test can only end when the last query confirms that no instance from this run is left. If the cleanup itself fails, hand over the instance ID, its current
+state and the error as the top-priority open item.

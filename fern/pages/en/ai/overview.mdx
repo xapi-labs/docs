@@ -1,0 +1,71 @@
+---
+title: AI Gateway
+subtitle: Unified protocols, routing across upstreams, automatic failover and transparent token billing.
+---
+
+AI Gateway gives you one endpoint, `https://ai.xapi.to`, for calling mainstream models such as Claude, GPT, Gemini,
+DeepSeek and Kimi. Your application uses the Anthropic Messages or OpenAI Chat Completions protocol, so there is no
+xAPI-specific request format to adapt to.
+
+## How it works
+
+The same model can be served by several upstreams. The Gateway picks an upstream based on the chosen strategy and its
+real-time health, switches to a backup on rate limits, timeouts or upstream errors, and returns the actual routing and
+billing details in response headers.
+
+<CardGroup cols={2}>
+  <Card title="Protocol compatible" icon="code">
+    Supports Anthropic Messages and OpenAI Chat Completions; existing SDKs usually only need a new
+    Base URL and API key.
+  </Card>
+  <Card title="Routing across upstreams" icon="route">
+    Use the `quality`, `speed` or `cost` strategy to pick the path among healthy providers that best fits on quality,
+    speed or price.
+  </Card>
+  <Card title="Automatic failover" icon="shield-check">
+    When an upstream hits a rate limit, returns a 5xx or times out, the Gateway tries a backup. Check the routing with
+    response headers such as `X-Routing-Provider` and `X-Routing-Attempts`.
+  </Card>
+  <Card title="Transparent billing" icon="coins">
+    Settles on the actual input, output and cache tokens; non-streaming requests return the cost of the request in `X-AI-Cost`.
+  </Card>
+</CardGroup>
+
+## Ways to connect
+
+| Usage | Base URL | Best for |
+| --- | --- | --- |
+| Anthropic protocol | `https://ai.xapi.to` | Claude Code, Anthropic SDK |
+| OpenAI protocol | `https://ai.xapi.to/v1` | OpenAI SDK, Codex, DeepSeek and other models |
+| Choose a strategy | `https://ai.xapi.to/{strategy}/v1` | Choosing `quality / speed / cost` explicitly |
+| Direct upstream | `https://{host}.p.xapi.to/v1` | When you must lock in one provider |
+
+## Use cases
+
+- Add multi-provider failover to an existing OpenAI or Anthropic application
+- Use one API key across developer tools such as Claude Code, Codex, Cursor and Cline
+- Choose a routing strategy per request to balance cost, speed and quality
+- Use different models such as DeepSeek, Claude, GPT and Gemini without changing the client protocol
+- Build AI applications with streaming responses, tool calling and multimodal capabilities
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/en/ai/quickstart" icon="rocket">
+    Make your first Anthropic or OpenAI protocol call with curl.
+  </Card>
+  <Card title="Models and pricing" href="/en/ai/models" icon="coins">
+    See models, upstreams and real-time prices.
+  </Card>
+  <Card title="Developer tools" href="/en/ai/integrations/claude-code" icon="terminal">
+    Set up clients such as Claude Code, Codex and Cursor.
+  </Card>
+  <Card title="AI API reference" href="/en/ai/api" icon="book">
+    See endpoints, authentication, response headers and error codes.
+  </Card>
+</CardGroup>
+
+<Info>
+  AI Gateway does not run shell commands or manage cloud instances. For isolated code execution, files, ports or GPUs,
+  use the separate [Sandbox](/en/sandbox/overview) product.
+</Info>

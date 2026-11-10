@@ -896,6 +896,13 @@ components:
           maxItems: 50
           uniqueItems: true
           items: { type: string, maxLength: 160 }
+        minContinuousRuntimeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 31536000
+          description: |
+            Minimum continuous runtime the task requires, in seconds. Only matches offerings that publish an explicit lifecycle limit;
+            a null limit means the provider has no fixed cutoff, but it doesn't mean the host never restarts.
     QuoteRequest:
       type: object
       description: Only matches an offering, checks the budget and issues a short-lived quote; it doesn't create or bill an instance.
@@ -1132,6 +1139,41 @@ components:
           allOf:
             - $ref: '#/components/schemas/SuspensionCapabilities'
           description: Normalized suspend, resume and auto-wake capabilities.
+        lifecycle:
+          type: object
+          description: Runtime duration, idle handling, keepAlive and state retention after a container restart.
+          properties:
+            maxContinuousRuntimeSeconds:
+              type: integer
+              nullable: true
+              minimum: 1
+              description: Fixed continuous runtime limit; null means the provider declares no fixed cutoff.
+            idle:
+              type: object
+              properties:
+                configurable: { type: boolean, description: Whether the idle timeout can be changed at runtime. }
+                defaultTimeoutSeconds: { type: integer, description: Default idle timeout in seconds. }
+                minTimeoutSeconds: { type: integer, description: Minimum settable idle timeout in seconds. }
+                maxTimeoutSeconds: { type: integer, description: Maximum settable idle timeout in seconds. }
+                action:
+                  type: string
+                  enum: [SUSPEND, STOP_RESET, TERMINATE]
+                  description: STOP_RESET means the next access starts a new container; old files, memory and processes are not kept.
+            keepAlive:
+              type: object
+              properties:
+                supported: { type: boolean, description: Whether idle auto-stop can be prevented. }
+                mode: { type: string, enum: [NATIVE, ADAPTER, UNSUPPORTED] }
+            lazyStart: { type: boolean, description: Whether access after an idle stop can create a new runtime. }
+            restartRetention:
+              type: object
+              properties:
+                filesystem: { type: boolean }
+                memory: { type: boolean }
+                processes: { type: boolean }
+            gracefulShutdownSeconds:
+              type: integer
+              description: Maximum seconds the application gets to clean up after the platform sends the termination signal.
       additionalProperties: true
     OfferingLifecycle:
       type: object

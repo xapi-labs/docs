@@ -3,6 +3,12 @@ title: OpenAI Agents + xAPI Sandbox
 subtitle: DeepSeek on ai.xapi.to does the planning; xAPI Sandbox does real, isolated, auditable tool execution.
 ---
 
+<Info>
+  This page is a client integration example: the OpenAI Agents SDK runs the model loop and tool decisions, `ai.xapi.to`
+  provides the model protocol, and xAPI Sandbox only provides isolated compute, lifecycle, audit and billing. The xAPI Gateway
+  doesn't host agent memory, prompts or orchestration. See [Product scope and capability model](/en/sandbox/scope).
+</Info>
+
 The OpenAI Agents SDK `SandboxAgent` splits "model reasoning" and "Sandbox compute" into two separate interfaces:
 
 ```text

@@ -219,9 +219,15 @@ navigation:
           - page: Overview and core concepts
             path: pages/en/sandbox/overview.mdx
             slug: overview
+          - page: Product scope and capability model
+            path: pages/en/sandbox/scope.mdx
+            slug: scope
           - page: CLI guide
             path: pages/en/sandbox/cli.mdx
             slug: cli
+          - page: Cloudflare-specific capabilities
+            path: pages/en/sandbox/cloudflare.mdx
+            slug: cloudflare
           - page: REST API call flow
             path: pages/en/sandbox/api-flow.mdx
             slug: api-flow

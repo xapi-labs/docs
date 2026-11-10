@@ -1,9 +1,9 @@
 ---
 title: Sandbox overview and core concepts
-subtitle: Isolated cloud environments for AI agents, selected by capability, with one lifecycle, per-second billing and a complete audit trail.
+subtitle: Isolated cloud environments with providers selected by capability, one lifecycle, per-second billing and a complete audit trail.
 ---
 
-xAPI Sandbox lets applications and AI agents use different cloud compute providers through one Consumer API.
+xAPI Sandbox lets any client use different cloud compute providers through one Consumer API.
 The caller describes the resources, capabilities and budget it needs. The Gateway picks a sellable spec, creates the instance, normalizes its state,
 records usage and handles settlement. Provider credentials are held by the platform and never reach prompts, user code or the Sandbox environment.
 
@@ -32,7 +32,10 @@ xAPI Sandbox Gateway
   </Card>
 </CardGroup>
 
-## What it's good for
+## What applications it can support
+
+All of the following are examples of clients combining Sandbox primitives. xAPI doesn't run model loops, memory, DAGs or multi-agent
+orchestration; those belong to the agent framework or application on top. Read [Product scope and capability model](/en/sandbox/scope) first.
 
 | Scenario | What Sandbox provides | Typical result |
 | --- | --- | --- |
@@ -116,11 +119,36 @@ Pin a provider only when:
 - the task depends on specific suspend, snapshot or network semantics;
 - you need a reproducible acceptance environment.
 
+For Cloudflare Browser Use, keepAlive, sessions, the code interpreter, background processes, Git, file changes and R2 backups, see
+[Cloudflare-specific capabilities](/en/sandbox/cloudflare).
+
 <Warning>
   "Supports Sandbox" doesn't mean every provider supports the same set of capabilities. A GPU Offering may only provide a managed
   connection extension without standard `exec/files`, and the current Cloudflare Offering may not support explicit
   `suspend/resume`. Always go by the live Offering declaration.
 </Warning>
+
+## How to read the continuous runtime limit
+
+Every Offering materializes `capabilities.lifecycle` from the Adapter Manifest.
+`maxContinuousRuntimeSeconds` is the single continuous run window the current Adapter commits to; `null`
+means the Adapter declares no uniform hard cutoff, **not that the resource will never stop because of balance, idle policy,
+capacity reclamation or the user terminating it**.
+
+The baseline values in the current built-in configuration are below; at runtime, always go by the live Offering:
+
+| Provider | Adapter default continuous window | Notes |
+| --- | ---: | --- |
+| E2B | 3600 seconds | The Adapter's failure fallback window, adjustable in deployment config; supports native suspend/resume |
+| Daytona | No uniform hard cutoff | Idle stop, suspend, archive and delete are configured through the Provider Extension |
+| Runloop | No uniform hard cutoff | Lifecycle is configurable through SKU/create parameters; suspend only promises to keep the file system |
+| Modal | 3600 seconds | Failure fallback window the Adapter writes at create time |
+| Cloudflare | No uniform hard cutoff | By default the runtime resets after 600 seconds idle and wakes natively on the next access |
+| RunPod | No uniform hard cutoff | Still bound by GPU capacity, balance and Pod state |
+| Vercel | 2700 seconds | Configured for the Hobby limit by default; persistent mode can restore the file system in a new session |
+
+xAPI only publishes and enforces these Sandbox lifecycle semantics as they are. Cross-window checkpoints, task splitting and resume strategy
+are decided by the agent or application on top.
 
 ## Security model
 
@@ -133,6 +161,9 @@ Pin a provider only when:
 ## Next steps
 
 <CardGroup cols={2}>
+  <Card title="Product scope and capability model" href="/en/sandbox/scope" icon="layer-group">
+    Tell platform primitives, Provider Extensions and client recipes apart
+  </Card>
   <Card title="CLI guide" href="/en/sandbox/cli" icon="terminal">
     From one-step runs to files, ports, suspend, GPU and audit
   </Card>

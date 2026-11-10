@@ -3,6 +3,11 @@ title: Sandbox CLI guide
 subtitle: Use xapi-to to quote, create, execute, manage files and ports, control the lifecycle, and read history and audit records.
 ---
 
+<Info>
+  The CLI is a thin client for the Sandbox infrastructure: it calls the quote, lifecycle, execution, file, port, extension and audit
+  APIs. The CLI doesn't implement an agent loop, memory, DAGs or multi-agent scheduling; the agent/CI scenarios on this page are only call examples.
+</Info>
+
 `xapi-to sandbox` gives agents and automation scripts machine-readable Sandbox lifecycle commands.
 Regular output is JSON by default; use `--format pretty` or `--format table` for easier reading.
 
@@ -146,6 +151,7 @@ Common selection flags:
 | `--cpu / --memory / --volume` | Minimum CPU, memory in GiB, volume in GiB |
 | `--gpu-count / --gpu-model` | GPU count and model |
 | `--regions a,b` | Allowed regions |
+| `--min-runtime 24h` | Minimum continuous runtime; filters on lifecycle declarations and doesn't mean the host never restarts |
 | `--requirements '<json>'` | Full requirements object |
 | `--max-hourly-usd` | Hard hourly price cap checked before create |
 

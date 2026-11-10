@@ -110,6 +110,33 @@ navigation:
         path: pages/sandbox/testing.mdx
         slug: testing
 
+  - section: 服务商接入
+    slug: provider
+    icon: fa-solid fa-store
+    contents:
+      - page: 服务商接入
+        path: pages/provider/overview.mdx
+        slug: overview
+      - page: OpenAPI 导入规范
+        path: pages/provider/openapi.mdx
+        slug: openapi
+      - page: 计费与收益
+        path: pages/provider/pricing.mdx
+        slug: pricing
+      - section: English
+        slug: en
+        collapsed: true
+        contents:
+          - page: Provider onboarding
+            path: pages/provider/en/overview.mdx
+            slug: overview
+          - page: OpenAPI import rules
+            path: pages/provider/en/openapi.mdx
+            slug: openapi
+          - page: Billing and earnings
+            path: pages/provider/en/pricing.mdx
+            slug: pricing
+
   - section: 帮助
     slug: help
     contents:

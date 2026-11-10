@@ -1,0 +1,115 @@
+---
+title: OpenAPI import rules
+subtitle: Supported formats, auth mapping and x-xapi extension fields, with a minimal example.
+---
+
+xAPI supports OpenAPI directly. If you already have API docs, one import generates every endpoint; add prices and you can submit for review.
+
+## Supported formats
+
+| Where | Supported |
+|---|---|
+| Console **Register API → Import OpenAPI** | OpenAPI 3.x or Swagger 2.0, JSON / YAML, as an uploaded file or a URL |
+| Agent / CLI `xapi-to provider import` | OpenAPI 3.0.3 JSON |
+
+You can read the platform's complete current rules at any time; the agent reads them before it starts:
+
+```bash
+npx xapi-to provider spec-rules
+```
+
+## Requirements
+
+- `info.title` (the service name) and `info.version` are required; `info.description` is recommended.
+- `servers[0].url` is the upstream base URL and must be reachable from the public internet.
+- Every operation needs a `summary`, which becomes the endpoint name; keep it under about 50 characters.
+- Write path parameters as `{param}`; they are converted on import.
+- `content` keys must be full MIME types, such as `application/json`.
+- Add a `content.application/json.example` to responses, using real data.
+- For file uploads use `multipart/form-data`, with the file field written as `{ "type": "string", "format": "binary" }`.
+
+## Upstream authentication
+
+Describe how your upstream authenticates in `components.securitySchemes` and reference it from the global `security`; don't repeat the auth parameters in each operation's `parameters`. On import they map as follows:
+
+| securitySchemes | xAPI auth type |
+|---|---|
+| `type: apiKey, in: header` | `HEADER` |
+| `type: http, scheme: bearer` | `BEARER` |
+| `type: apiKey, in: query` | `QUERY` |
+| No authentication | `NONE` |
+
+The document only says *how* to authenticate. The actual secret goes under **Upstream** in the console (on the CLI, pass it separately with `--private-headers-file`); it never appears in the document or on the service page.
+
+## x-xapi extension fields
+
+On top of standard OpenAPI, `x-xapi-*` fields carry the platform settings in the same document:
+
+**Service level (inside `info`)**
+
+| Field | Description |
+|---|---|
+| `x-xapi-category` | Service category ID, such as `AI-Models`, `Crypto` or `Social`; see `spec-rules` for the full list |
+| `x-xapi-host` | Host prefix for calls: lowercase letters, digits and hyphens, such as `my-api` |
+| `x-xapi-logo-url` | Logo URL |
+| `x-xapi-is-public` | Whether the service is listed in the marketplace; defaults to `true` |
+| `x-xapi-access-mode` | `PROXY` (default, billed through the gateway) or `DIRECT` (directory listing only) |
+| `x-xapi-upstream-http-version` | Upstream HTTP version: `1` (default) or `2` (HTTPS only) |
+
+**Endpoint level (inside each operation)**
+
+| Field | Description |
+|---|---|
+| `x-xapi-billing.type` | `PER_CALL` (default), `PER_TOKEN`, `PER_RESOURCE` or `DYNAMIC` |
+| `x-xapi-billing.costPerCall` | Price per call, in USD |
+| `x-xapi-billing.tokenPricing` | Per-token prices: `{ inputPricePerToken, outputPricePerToken }` |
+| `x-xapi-billing.costPerResource` / `resourceCountJsonPath` | Unit price and count path for per-resource billing |
+| `x-xapi-streaming` | `{ supportsStreaming: true, streamFormat: "sse" }`; `sse` and `ndjson` are supported |
+| `x-xapi-hidden` | Hides the endpoint from the docs (it can still be called) |
+
+For the fields of each billing type and how pre-authorization works, see [Billing and earnings](/provider/en/pricing).
+
+## Minimal example
+
+```json
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Token Price API",
+    "version": "1.0.0",
+    "description": "Real-time prices for major tokens",
+    "x-xapi-category": "Crypto",
+    "x-xapi-host": "token-price-demo"
+  },
+  "servers": [{ "url": "https://price.example.com/v1" }],
+  "components": {
+    "securitySchemes": {
+      "apiKey": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    }
+  },
+  "security": [{ "apiKey": [] }],
+  "paths": {
+    "/price/{symbol}": {
+      "get": {
+        "summary": "Get token price",
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "x-xapi-billing": { "type": "PER_CALL", "costPerCall": 0.001 },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "example": { "symbol": "BTC", "usd": 98213.4 } } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+After the import the service is a draft: enter the value of `X-API-Key` under **Upstream**, confirm the prices and submit for review.
+
+## Importing again
+
+When you import into an existing service from **Manage APIs → Import** in the workspace, endpoints are matched by method + path. Existing endpoints get their parameters, request body, responses and empty descriptions updated, while billing, hidden flags, private upstream headers and other settings are kept; new endpoints are added, and no existing endpoint is deleted.

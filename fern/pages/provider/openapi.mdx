@@ -1,0 +1,115 @@
+---
+title: OpenAPI 导入规范
+subtitle: 支持的格式、鉴权映射与 x-xapi 扩展字段，附最小示例。
+---
+
+xAPI 直接支持 OpenAPI。已经有接口文档的服务商，导入一次就能生成全部接口，再补上价格即可提交审核。
+
+## 支持的格式
+
+| 入口 | 支持 |
+|---|---|
+| 控制台「注册 API → 导入 OpenAPI」 | OpenAPI 3.x 或 Swagger 2.0，JSON / YAML，上传文件或填文档地址 |
+| Agent / 命令行 `xapi-to provider import` | OpenAPI 3.0.3 JSON |
+
+平台当前的完整规则可以随时读取，Agent 也会在动手前先读一遍：
+
+```bash
+npx xapi-to provider spec-rules
+```
+
+## 基本要求
+
+- `info.title`（服务名）和 `info.version` 必填，`info.description` 建议填写。
+- `servers[0].url` 是上游基础地址，必须是公网可访问的 URL。
+- 每个接口都要有 `summary`，作为接口名称，建议 50 字以内。
+- 路径参数用 `{param}` 写法，导入时会自动转换。
+- `content` 的键必须是完整的 MIME 类型，例如 `application/json`。
+- 响应建议附上 `content.application/json.example`，用真实数据。
+- 文件上传用 `multipart/form-data`，文件字段写成 `{ "type": "string", "format": "binary" }`。
+
+## 上游鉴权
+
+上游的鉴权方式写在 `components.securitySchemes`，并在全局 `security` 里引用；不要把鉴权参数再写进接口的 `parameters`。导入时按下表映射：
+
+| securitySchemes | xAPI 鉴权方式 |
+|---|---|
+| `type: apiKey, in: header` | `HEADER` |
+| `type: http, scheme: bearer` | `BEARER` |
+| `type: apiKey, in: query` | `QUERY` |
+| 不需要鉴权 | `NONE` |
+
+文档里只描述「用什么方式鉴权」，真正的密钥值在控制台「上游接入」里填写（命令行用 `--private-headers-file` 单独传入），不会出现在文档和服务详情里。
+
+## x-xapi 扩展字段
+
+在标准 OpenAPI 之外，可以用 `x-xapi-*` 字段一次带上平台配置：
+
+**服务级（写在 `info` 里）**
+
+| 字段 | 说明 |
+|---|---|
+| `x-xapi-category` | 服务分类 ID，例如 `AI-Models`、`Crypto`、`Social`；完整列表见 `spec-rules` |
+| `x-xapi-host` | 调用域名前缀，小写字母、数字和连字符，例如 `my-api` |
+| `x-xapi-logo-url` | Logo 地址 |
+| `x-xapi-is-public` | 是否在市场展示，默认 `true` |
+| `x-xapi-access-mode` | `PROXY`（默认，经网关计费）或 `DIRECT`（仅目录展示） |
+| `x-xapi-upstream-http-version` | 上游 HTTP 版本，`1`（默认）或 `2`（仅 HTTPS） |
+
+**接口级（写在每个 operation 里）**
+
+| 字段 | 说明 |
+|---|---|
+| `x-xapi-billing.type` | `PER_CALL`（默认）、`PER_TOKEN`、`PER_RESOURCE`、`DYNAMIC` |
+| `x-xapi-billing.costPerCall` | 按次价格，美元 |
+| `x-xapi-billing.tokenPricing` | 按 token 单价：`{ inputPricePerToken, outputPricePerToken }` |
+| `x-xapi-billing.costPerResource` / `resourceCountJsonPath` | 按资源计费的单价和计数路径 |
+| `x-xapi-streaming` | `{ supportsStreaming: true, streamFormat: "sse" }`，支持 `sse` 和 `ndjson` |
+| `x-xapi-hidden` | 在文档里隐藏这个接口（仍可调用） |
+
+各计费方式的字段和预扣说明见 [计费与收益](/provider/pricing)。
+
+## 最小示例
+
+```json
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Token Price API",
+    "version": "1.0.0",
+    "description": "主流代币的实时价格",
+    "x-xapi-category": "Crypto",
+    "x-xapi-host": "token-price-demo"
+  },
+  "servers": [{ "url": "https://price.example.com/v1" }],
+  "components": {
+    "securitySchemes": {
+      "apiKey": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+    }
+  },
+  "security": [{ "apiKey": [] }],
+  "paths": {
+    "/price/{symbol}": {
+      "get": {
+        "summary": "Get token price",
+        "parameters": [
+          { "name": "symbol", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "x-xapi-billing": { "type": "PER_CALL", "costPerCall": 0.001 },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "example": { "symbol": "BTC", "usd": 98213.4 } } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+导入后服务处于草稿状态：在「上游接入」里填上 `X-API-Key` 的值，确认价格后提交审核。
+
+## 再次导入
+
+在工作区「管理 API → 导入」里给已有服务再次导入时，按「方法 + 路径」匹配接口：已有的接口只更新参数、请求体、响应和空着的描述，计费、隐藏、上游私有头等配置保持不变；新的接口会追加，原有接口不会被删除。

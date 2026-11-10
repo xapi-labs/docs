@@ -1,0 +1,89 @@
+---
+title: Billing and earnings
+subtitle: The four billing types, pre-authorization and free endpoints, plus settlement, withdrawals and moving earnings to your balance.
+---
+
+You set a price for each endpoint, and callers pay from their xAPI balance. Only successful calls are billed; failed calls cost nothing.
+
+## Billing types
+
+| Type | Charged by | Key fields |
+|---|---|---|
+| `PER_CALL` | A fixed price per successful call | `costPerCall` |
+| `PER_TOKEN` | Input / output tokens, optionally priced per model | `tokenPricing`, `estimatedMaxTokens` |
+| `PER_RESOURCE` | The number of items returned, such as search results | `costPerResource`, `resourceCountJsonPath`, `estimatedMaxResources` |
+| `DYNAMIC` | A value computed from the response, such as the upstream's actual cost times a factor | `dynamicRules` |
+
+All prices are in USD. WebSocket endpoints have three more types: by duration (`duration`), by realtime tokens (`realtime-token`) and by character (`per-char`).
+
+#### Per call
+
+```json
+{ "billingType": "PER_CALL", "costPerCall": 0.001 }
+```
+
+#### Per token
+
+```json
+{
+  "billingType": "PER_TOKEN",
+  "tokenPricing": {
+    "model-a": { "inputPricePerToken": 0.000001, "outputPricePerToken": 0.000003 },
+    "default": { "inputPricePerToken": 0.000001, "outputPricePerToken": 0.000003 }
+  },
+  "estimatedMaxTokens": 4096
+}
+```
+
+`default` is the fallback price for models without their own entry. Token usage of common AI APIs is detected automatically; for non-standard requests or responses, point `tokenJsonPaths` at the usage fields.
+
+#### Per resource
+
+```json
+{
+  "billingType": "PER_RESOURCE",
+  "costPerResource": 0.005,
+  "resourceCountJsonPath": "data.items",
+  "estimatedMaxResources": 100
+}
+```
+
+`resourceCountJsonPath` points to an array (its length is counted) or to a number.
+
+## Pre-authorization and settlement
+
+Per-token, per-resource and dynamic billing hold an estimated amount before the call starts, settle on actual usage when it ends, and release the rest. `estimatedMaxTokens` and `estimatedMaxResources` cap that hold:
+
+- set too high, callers with a small balance are rejected because the hold can't be covered;
+- set too low, the hold may not cover the actual cost.
+
+Set them to the largest usage you expect in real traffic.
+
+## Free endpoints
+
+A `PER_CALL` price of `0` makes an endpoint free. Callers still need an xAPI Key, so call statistics, rate limiting and abuse protection keep working. Keep the service in `PROXY` mode if you need statistics and rate limiting.
+
+## Earnings and withdrawals
+
+See **Provider → Earnings / Withdrawal** in the console sidebar:
+
+| Item | Description |
+|---|---|
+| Pending settlement | Totalled from actual billing records, settled about every 5 minutes |
+| Withdrawable | Settled earnings, net of the platform fee |
+| Earnings this month / Total earnings | Net amounts after the platform's share |
+
+The platform fee rate is shown at the top of the Earnings / Withdrawal page.
+
+A withdrawal sends your withdrawable balance to your wallet address (USDC on Base) as an on-chain transfer once it is approved. You can also use the CLI to move settled earnings into your xAPI account balance and spend them on other services (one way; it can't be moved back):
+
+```bash
+npx xapi-to earnings                      # earnings overview
+npx xapi-to earnings transfer 10 --idempotency-key <stable-key>
+```
+
+This needs a key with the `earnings:read` / `earnings:transfer` scopes; provider keys generated in the workspace don't include them by default.
+
+## Changing prices
+
+Prices change like any other setting: for a published service, start a new working revision, make the change, review it (`provider diff`), then submit for review; the new price takes effect once approved.

@@ -1,0 +1,89 @@
+---
+title: 计费与收益
+subtitle: 四种计费方式、预扣与免费接口，以及结算、提现和收益转余额。
+---
+
+价格由你按接口设定，调用方用 xAPI 余额付费。只对成功的调用计费，失败的调用不扣费。
+
+## 计费方式
+
+| 方式 | 按什么收费 | 关键字段 |
+|---|---|---|
+| `PER_CALL` | 每次成功调用一个固定价格 | `costPerCall` |
+| `PER_TOKEN` | 按输入 / 输出 token 数，可以按模型分别定价 | `tokenPricing`、`estimatedMaxTokens` |
+| `PER_RESOURCE` | 按返回的条目数，例如搜索结果条数 | `costPerResource`、`resourceCountJsonPath`、`estimatedMaxResources` |
+| `DYNAMIC` | 按响应里的字段计算，例如上游返回的实际成本乘以系数 | `dynamicRules` |
+
+价格单位都是美元。WebSocket 接口另有按时长（`duration`）、按实时 token（`realtime-token`）和按字符（`per-char`）三种计费方式。
+
+#### 按次
+
+```json
+{ "billingType": "PER_CALL", "costPerCall": 0.001 }
+```
+
+#### 按 token
+
+```json
+{
+  "billingType": "PER_TOKEN",
+  "tokenPricing": {
+    "model-a": { "inputPricePerToken": 0.000001, "outputPricePerToken": 0.000003 },
+    "default": { "inputPricePerToken": 0.000001, "outputPricePerToken": 0.000003 }
+  },
+  "estimatedMaxTokens": 4096
+}
+```
+
+`default` 是没有单独定价的模型使用的兜底价。常见 AI 接口的 token 用量平台会自动识别；非标准的请求或响应，用 `tokenJsonPaths` 指明用量字段的位置。
+
+#### 按资源
+
+```json
+{
+  "billingType": "PER_RESOURCE",
+  "costPerResource": 0.005,
+  "resourceCountJsonPath": "data.items",
+  "estimatedMaxResources": 100
+}
+```
+
+`resourceCountJsonPath` 指向一个数组（按长度计）或一个数字。
+
+## 预扣与结算
+
+按 token、按资源和动态计费在调用开始前会先冻结一笔预估金额，调用结束后按实际用量结算，多冻结的部分退回。`estimatedMaxTokens`、`estimatedMaxResources` 就是预扣的上限：
+
+- 设得太大，余额不多的调用方会因为预扣不足被拒绝；
+- 设得太小，可能覆盖不了实际费用。
+
+按实际业务里的最大用量来设。
+
+## 免费接口
+
+把 `PER_CALL` 的价格设为 `0` 就是免费接口。调用方仍然需要一个 xAPI Key，这样调用统计、限流和防滥用照常生效。需要统计和限流时，服务的接入模式保持 `PROXY`。
+
+## 收益与提现
+
+在控制台左侧 **服务商 → 收益 / 提现** 查看：
+
+| 项目 | 说明 |
+|---|---|
+| 待结算 | 按实际计费记录汇总，大约每 5 分钟结算一次 |
+| 可提现 | 已结算、扣除平台服务费后的净收益 |
+| 本月收益 / 累计收益 | 平台抽成后的净额 |
+
+平台服务费比例显示在「收益 / 提现」页顶部。
+
+提现会把可提现余额转到你的钱包地址（USDC · Base），审核通过后链上转账。也可以用命令行把已结算的收益转成 xAPI 账户余额，用来调用其他服务（单向，不能转回）：
+
+```bash
+npx xapi-to earnings                      # 收益概览
+npx xapi-to earnings transfer 10 --idempotency-key <stable-key>
+```
+
+这需要带 `earnings:read` / `earnings:transfer` 权限的 Key；工作区生成的服务商 Key 默认不包含这两个权限。
+
+## 调整价格
+
+改价格和改其他配置一样：已发布的服务先开一个新的工作修订，修改后查看改动（`provider diff`），再提交审核，通过后新价格生效。

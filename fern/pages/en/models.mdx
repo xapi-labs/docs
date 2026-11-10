@@ -1,0 +1,105 @@
+---
+title: Models and pricing
+subtitle: Common xAPI models and the lowest price currently available for each (USD / 1M tokens).
+---
+
+The tables below list the **lowest price** for common xAPI models (what the `cost` strategy picks automatically).
+Prices are in **USD / 1M tokens**, shown as `input / output`.
+
+## Anthropic Claude
+
+| Model | Context | Input / output |
+| --- | --- | --: |
+| `claude-opus-4-7` | ≤200K | \$0.65 / \$3.30 |
+| `claude-opus-4-7` | >200K | \$2.00 / \$7.50 |
+| `claude-opus-4-6` | 200K | \$0.65 / \$3.30 |
+| `claude-sonnet-4-6` | 200K | \$0.39 / \$1.95 |
+| `claude-sonnet-4-5` | 200K | \$0.60 / \$3.00 |
+| `claude-haiku-4-5` | 200K | \$0.13 / \$0.65 |
+
+<Note>
+  When a single `claude-opus-4-7` request has a prompt context **over 200K**,
+  the whole request is billed at the \$2.00 / \$7.50 tier (not just the part above 200K).
+</Note>
+
+## OpenAI
+
+| Model | Context | Input / output |
+| --- | --- | --: |
+| `gpt-5.5` | 128K | \$0.50 / \$3.00 |
+
+## Image generation
+
+| Model | Price |
+| --- | --: |
+| `gpt-image-2` | \$0.006 / \$0.032 |
+
+## Automatic routing to the lowest price
+
+When you call `https://ai.xapi.to/cost/v1/messages`, the gateway automatically picks the cheapest healthy upstream at that moment.
+To lock in a specific upstream, use the direct subdomain `{host}.p.xapi.to/v1` (see the [API reference](/en/ai/api)).
+
+## Model name matching
+
+The gateway resolves the `model` field of a request in this order:
+
+<Steps>
+  <Step title="Exact match">
+    Looks for an identical key in the endpoint's `tokenPricing` configuration.
+  </Step>
+  <Step title="Case-insensitive match">
+    `Claude-Opus-4-7` and `claude-opus-4-7` are equivalent.
+  </Step>
+  <Step title="Strip the provider prefix">
+    `anthropic/claude-opus-4-7` has `anthropic/` stripped first, then matching is tried again.
+  </Step>
+  <Step title="default fallback">
+    If none of the above match and the endpoint has `default` pricing configured, `default` is used.
+  </Step>
+  <Step title="Reject">
+    If the endpoint has no `default` configured, the gateway returns **HTTP 400** with `allowedModels` listed in the response body.
+  </Step>
+</Steps>
+
+## Billing types
+
+The `billingType` field of an xAPI endpoint takes one of three values; AI endpoints always use `PER_TOKEN`:
+
+- **PER_TOKEN**: billed as input / output token count × the model's unit price (AI endpoints)
+- **PER_CALL**: billed per call (regular REST APIs)
+- **PER_RESOURCE**: billed by resource usage (for example, image generation per image)
+
+A single proxy service handles every billing type through host-based gateway routing.
+This is fully transparent to callers: you don't need to care how the backend bills.
+
+## Separate billing for cache tokens
+
+Claude models support prompt caching, and xAPI bills cache writes and cache reads separately:
+
+- `cacheCreationPricePerToken` — cache writes, usually the input price × 1.25
+- `cacheReadPricePerToken` — cache hit reads, usually the input price × 0.10
+
+<Note>
+  OpenAI's `cached_tokens` field is nested inside `prompt_tokens`.
+  xAPI normalizes it automatically when it records usage:
+  `inputTokens = prompt_tokens − cache_creation_tokens − cache_read_tokens`,
+  so `inputTokens` always means regular, non-cached input tokens.
+</Note>
+
+## Choosing a model
+
+| Scenario | Recommended |
+| --- | --- |
+| Code refactoring / complex reasoning | `claude-opus-4-7` |
+| High-volume chat / customer support | `claude-haiku-4-5` or `gpt-5.5` |
+| Moderate reasoning / balancing performance and cost | `claude-sonnet-4-6` |
+| Image generation | `gpt-image-2` |
+| Not sure | Use the `quality` strategy of aggregated routing |
+
+## Live data sources
+
+The data above is synced weekly with `api_endpoints.tokenPricing` in production. Live lists:
+
+- Browser: [xapi.to/ai](https://xapi.to/ai)
+- API: `GET https://ai.xapi.to/openapi.json` returns the full OpenAPI spec,
+  where the `x-billing.modelPricing` field contains the complete pricing

@@ -1,0 +1,234 @@
+---
+title: Cloudflare-specific capabilities
+subtitle: Long-running instances, Browser Run, background processes, a code interpreter and optional R2 backups.
+---
+
+Cloudflare Sandbox connects to xAPI through the `cf-edge` Offering. Standard `exec`, `files`, `ports`,
+quotes, billing, audit and termination still use the unified API. Cloudflare-native capabilities are called through
+`POST /v1/sandboxes/{id}/extensions/{extensionId}`.
+
+## Understand long-running semantics first
+
+Cloudflare has no fixed cutoff for the maximum continuous runtime. By default the container stops after 10 minutes idle. The next access
+starts a new container, and old local files, memory, processes, shell sessions and Code Interpreter contexts are not
+kept. Enabling `keepAlive` prevents this idle stop, but platform maintenance or a host change can still restart the container.
+
+So a client that needs long runs should do all of the following:
+
+1. Pass `minContinuousRuntimeSeconds: 86400` when getting a quote;
+2. Call `cloudflare.set_keep_alive` after creating the instance;
+3. Write task checkpoints to external storage, or use R2 backup;
+4. Turn off keepAlive and terminate the instance in `finally`.
+
+```json
+{
+  "requirements": {
+    "cpu": { "min": 0.5 },
+    "memoryGiB": { "min": 4 },
+    "minContinuousRuntimeSeconds": 86400,
+    "capabilities": [
+      "exec",
+      "commands.background",
+      "lifecycle.keep_alive",
+      "extension:cloudflare.backup.create"
+    ]
+  },
+  "maxEstimatedHourlyUsd": "0.20"
+}
+```
+
+## Capability list
+
+| Category | Extension ID | Purpose |
+| --- | --- | --- |
+| Lifecycle | `cloudflare.set_keep_alive` | Turn keep-alive on or off dynamically |
+| Lifecycle | `cloudflare.set_idle_timeout` | Set an idle timeout of 30–86400 seconds |
+| Background processes | `cloudflare.process.start/list/get/logs/kill/cleanup` | Start, observe, read logs from and end services |
+| Readiness checks | `cloudflare.process.wait_for_port` / `wait_for_log` | Wait for a web service or a task marker |
+| Shell sessions | `cloudflare.session.create/exec/delete` | Keep cwd, environment variables and shell state |
+| Code interpreter | `cloudflare.code.create/run/list/delete` | Stateful Python, JavaScript and TypeScript execution |
+| Git | `cloudflare.git.checkout` | Branch, target directory, shallow clone |
+| File changes | `cloudflare.files.check_changes` | Check changed/unchanged/resync with a version cursor |
+| Persistence | `cloudflare.backup.create/restore` | Back up the workspace to R2 and restore it |
+| Object storage | `cloudflare.mount_bucket/unmount_bucket` | Mount R2/S3/GCS storage to a directory |
+| Browser Quick Actions | `cloudflare.browser.content/screenshot/pdf/markdown/snapshot/accessibility_tree/scrape/json/links` | Render web pages and get structured content, screenshots or documents |
+| Browser automation | `cloudflare.browser.automate` | Controlled Playwright navigation, form interaction, DOM extraction, recording and screenshots |
+
+Whether an extension is available is determined by `capabilities.extensionIds` on the live Offering. The Gateway rejects calls to an
+undeclared ID; it never silently falls back to a plain shell command.
+
+The current xAPI extension transport is one request, one JSON response. So Cloudflare's interactive PTY
+and file-change WebSocket streams are not passed off as supported capabilities: interactive workflows use stateful sessions, and file watching uses
+`check_changes` cursor polling. `terminal` and live watch will be declared once a unified streaming transport protocol lands.
+
+## Background processes and temporary services
+
+The standard command API takes `background: true`, and the returned `background.commandId` is the Cloudflare
+process ID. Then wait for the port, get the public URL, read the logs and end the process:
+
+```bash
+process_json="$(curl -fsS -X POST \
+  "https://cf-edge.sandbox.xapi.to/v1/sandboxes/$sandbox_id/commands" \
+  -H "XAPI-Key: $XAPI_KEY" -H 'Content-Type: application/json' \
+  -d '{"command":"python3 -m http.server 8080 --directory /workspace","background":true}')"
+
+process_id="$(printf '%s' "$process_json" | jq -r '.background.commandId')"
+
+curl -fsS -X POST \
+  "https://cf-edge.sandbox.xapi.to/v1/sandboxes/$sandbox_id/extensions/cloudflare.process.wait_for_port" \
+  -H "XAPI-Key: $XAPI_KEY" -H 'Content-Type: application/json' \
+  -d "{\"idempotencyKey\":\"wait-$sandbox_id-8080\",\"input\":{\"processId\":\"$process_id\",\"port\":8080,\"mode\":\"http\",\"timeoutMs\":60000}}"
+```
+
+After you get the URL returned by `GET /v1/sandboxes/{id}/ports/8080`, still make a real request for the marker from outside.
+A Quick Tunnel is a random temporary address and can't be used as a permanent domain.
+
+## Stateful Code Interpreter
+
+Create a context first, then pass the same `contextId` to every later run so that variables and imports are kept:
+
+```bash
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.code.create \
+  --provider cf-edge \
+  --input '{"language":"python","cwd":"/workspace"}'
+
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.code.run \
+  --provider cf-edge \
+  --input '{"contextId":"REPLACE_CONTEXT_ID","code":"value = 6 * 7; print(value)"}'
+```
+
+A context exists only for the lifetime of the current container. It is not a persistent database that survives restarts.
+
+## R2 backups
+
+`cloudflare.backup.create` returns an `{id, dir}` handle. Save the handle and pass it unchanged in
+`input.backup` to restore. The Bridge side must configure the `BACKUP_BUCKET` R2 binding, the bucket name, the Cloudflare
+account ID, and an R2 access key/secret with Object Read & Write permission. The adapter also needs
+`CLOUDFLARE_SANDBOX_BACKUP_ENABLED=true`. Until this is configured, the Offering doesn't declare these two extensions.
+
+Backup objects are not deleted automatically when the Sandbox is terminated. Use a short `ttl`, and also add a lifecycle deletion rule
+for the `backups/` prefix in R2. Production restores use copy-on-write. The mount is lost once the container stops again,
+and you need to restore again with the same backup handle.
+
+## Browser Use
+
+Cloudflare Browser Run and Sandbox Container are two separate Cloudflare products. xAPI attaches the browser
+extensions to the Sandbox instance so they reuse the same user ownership, API key, operation history, audit and bill.
+The browser does not automatically share the container's `/workspace`, processes or environment variables. One example of how a client can combine them:
+
+1. Use a Quick Action to read a page's Markdown, links or accessibility tree at low cost;
+2. Call `cloudflare.browser.automate` only when you need to click, fill in a form or log in;
+3. Write the structured result to `/workspace` through the standard files API and hand it to code in the Sandbox for analysis;
+4. Save the evidence you need, then terminate the Sandbox. The Bridge closes the browser at the end of each automation run.
+
+### Choose a capability by task
+
+Don't hand every web task to Playwright. The approach that is most comfortable for users, and easiest to keep cost under control, is to pick the smallest
+capability first and step up only as needed:
+
+| User goal | Preferred capability | When to move to the next layer |
+| --- | --- | --- |
+| Read the rendered body text | `markdown` or `content` | Switch to `snapshot` when you also need screenshots and accessibility evidence |
+| Keep evidence of a release or compliance check | `snapshot` | Use `automate` when you need to click or verify interaction state |
+| Get a page screenshot or PDF | `screenshot` / `pdf` | No extra browser script inside the Sandbox is needed |
+| Pull business fields by known CSS selectors | `scrape` | Consider `json` when the page structure is unknown or fields need semantic normalization |
+| Inventory navigation, on-site links and external links | `links` | Recursive multi-page crawling needs async `crawl`, which isn't integrated yet |
+| Have AI normalize the page into structured JSON | `json` | It also uses Workers AI; prefer `scrape` for fixed selectors |
+| Click, fill in, select, wait and recheck the DOM | `automate` | Human takeover will need the future user-level Browser Session |
+| Analyze browser results and produce artifacts | files + `cloudflare.code.*` | Large pipelines can combine session, process and R2 backup |
+
+This forms an optional client recipe: **Read → Act → Evidence → Compute → Persist**. Quick Actions handle low-cost
+reads, and Playwright handles only the parts that truly need interaction. Screenshots, Markdown, extraction results and recording IDs serve as evidence.
+They are written to `/workspace` and analyzed by the Code Interpreter or plain `exec`, and the artifacts worth keeping are finally downloaded or backed up.
+
+Products built on top can wrap their own recipes such as "page reading", "structured extraction", "interaction verification" and "release audit",
+or call the extensions directly. xAPI only guarantees authentication, user ownership, capability declaration, audit and billing for these primitives.
+It does not run the agent's business planning, memory or task orchestration.
+
+### Get a page snapshot quickly
+
+```bash
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.browser.snapshot \
+  --provider cf-edge \
+  --input '{
+    "url":"https://example.com/",
+    "formats":["screenshot","markdown","accessibilityTree"]
+  }'
+```
+
+What the top-level response fields mean:
+
+| Field | Meaning |
+| --- | --- |
+| `action` | The Cloudflare Quick Action that actually ran |
+| `browserMsUsed` | Browser milliseconds used by this call, as returned in the Cloudflare response header |
+| `contentType` | Upstream response type; decides whether `result` is JSON, text or base64 |
+| `byteLength` | Response body size in bytes; not the billed duration |
+| `result` | Raw structured result of the Quick Action |
+
+### Controlled Playwright automation
+
+```bash
+npx xapi-to sandbox extension "$sandbox_id" cloudflare.browser.automate \
+  --provider cf-edge \
+  --input '{
+    "url":"https://demo.playwright.dev/todomvc/",
+    "recording":true,
+    "actions":[
+      {"type":"fill","selector":".new-todo","value":"review xAPI report"},
+      {"type":"press","selector":".new-todo","key":"Enter"},
+      {"type":"check","selector":".todo-list li .toggle"},
+      {"type":"wait_for_selector","selector":".todo-list li.completed"}
+    ],
+    "extract":[
+      {"name":"todos","selector":".todo-list li label","all":true}
+    ],
+    "screenshot":{"type":"png","fullPage":true}
+  }'
+```
+
+Automation allows at most 40 actions and 30 extraction items, a timeout of at most 60 seconds per run, and explicit waits of at most 5 seconds. The Bridge
+rejects URLs that contain a username/password, common local or private network addresses, oversized requests and responses over 8 MiB. Don't put tokens
+in URLs. Production workflows that need login should open only after xAPI sets up dedicated Secret injection and a domain policy.
+
+In the response, `sessionId` is for audit, `recorded` means recording was requested, `browserElapsedMs` is the end-to-end browser time measured by the Bridge,
+`extracted` holds the results extracted by selector, and `screenshot` is base64.
+The current API is one request, then the browser closes. You can't use this `sessionId` to keep driving the browser.
+
+The main inputs of the Quick Actions are not all the same:
+
+- `snapshot` needs at least two `formats`, chosen from `content`, `screenshot`, `markdown` and
+  `accessibilityTree`;
+- `scrape` requires `elements`, and each item needs at least one CSS `selector`;
+- `json` requires `prompt` or `response_format`, and suits semantic extraction rather than fixed DOM reads;
+- Every action can take `url` or `html`, but cookies, Basic Auth and other raw credentials must not go into
+  auditable parameters.
+
+Browser Run browser time and any Workers AI cost from the `json` Quick Action are not included in the
+Sandbox Container hourly price. The Offering settles each extension at its own `OPERATION` rate.
+
+<Warning>
+  Persistent CDP, Live View
+  and human takeover are not available yet. They need user-level session ownership, expiry and explicit closing, WebSocket
+  proxying and credential isolation. Returning the Cloudflare CDP URL directly would bypass xAPI authentication and audit, so
+  it can't be passed off as already supported.
+</Warning>
+
+## Complete runnable demos
+
+The `sandbox-api-demos` repository provides four zero-dependency Node.js examples:
+
+```bash
+npm run demo:cf-agent   # Day-long agent workspace: Git/session/code/process/port/change
+npm run demo:cf-backup  # R2 backup, overwrite files, restore and verify contents
+npm run demo:cf-browser # End-to-end smoke test of Browser Run capabilities
+npm run demo:cf-audit   # Website release audit: structure, links, recording, two screenshots and a downloadable report
+```
+
+`demo:cf-audit` is the complete user-facing business reference. By default it audits the official Cloudflare Browser Run page,
+and you can also point `XAPI_CF_AUDIT_URL` and `XAPI_CF_AUDIT_EXPECT` at your own release page to verify it. It saves
+`report.json`, `report.md`, `evidence.json`, the page Markdown and two PNGs to local
+`artifacts/`, instead of just printing HTTP 200.
+
+All four scripts make real quotes, create billed instances, run checks, terminate, wait for the final state, and check operations,
+events, usageSegments, billingPeriods and activity history for leftovers.

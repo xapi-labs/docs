@@ -1,0 +1,283 @@
+---
+title: OpenAI Agents + xAPI Sandbox
+subtitle: DeepSeek on ai.xapi.to does the planning; xAPI Sandbox does real, isolated, auditable tool execution.
+---
+
+<Info>
+  This page is a client integration example: the OpenAI Agents SDK runs the model loop and tool decisions, `ai.xapi.to`
+  provides the model protocol, and xAPI Sandbox only provides isolated compute, lifecycle, audit and billing. The xAPI Gateway
+  doesn't host agent memory, prompts or orchestration. See [Product scope and capability model](/en/sandbox/scope).
+</Info>
+
+The OpenAI Agents SDK `SandboxAgent` splits "model reasoning" and "Sandbox compute" into two separate interfaces:
+
+```text
+                         ┌─ OpenAI-compatible model provider
+User task ─► Runner ─────┤  ai.xapi.to/v1 → deepseek-v4-pro
+                         │
+                         └─ SandboxClient
+                            sandbox.xapi.to → Daytona / E2B / ...
+```
+
+So you can use OpenAI's agent orchestration and Shell capability while DeepSeek generates tool calls through
+`ai.xapi.to` and xAPI Sandbox actually runs the commands in an isolated instance. The model never gets the
+xAPI Key or the underlying provider credentials.
+
+## Install
+
+```bash
+npm install @openai/agents xapi-to zod
+```
+
+The example uses two package entry points:
+
+- `@openai/agents` and `@openai/agents/sandbox`: Runner, SandboxAgent, Manifest, Shell;
+- `xapi-to/openai-sandbox`: maps the OpenAI `SandboxClient` protocol to the xAPI Sandbox Gateway.
+
+<Note>
+  `xapi-to/openai-sandbox` ships with the xapi-to release that includes this adapter. If you are developing locally in the CLI repository,
+  run `npm run build` first and make sure your app resolves to the current workspace package.
+</Note>
+
+## Local testing before the new CLI is released
+
+The current workspace includes a source example you can run directly. You don't need to wait for the npm release or install the local package globally:
+
+```bash
+cd /path/to/xapi-cli
+npm install
+export XAPI_SANDBOX_KEY='sk-sandbox-production-...'
+export XAPI_SANDBOX_HOST='sandbox.xapi.to'
+export XAPI_AI_KEY='sk-ai-production-...'
+npm run example:sandbox:openai
+```
+
+The example file is `examples/openai-agents-sandbox-local.ts`. Compared with the released code below,
+the only key difference is that the adapter is imported from local source:
+
+```ts
+import { XapiAgentsSandboxClient } from '../src/openai-sandbox-client.ts';
+```
+
+The examples in this doc use the following settings; each can be overridden with an environment variable:
+
+| Setting | Default | Environment variable |
+| --- | --- | --- |
+| Model Gateway | `https://ai.xapi.to/v1` | Fixed to the current OpenAI-compatible endpoint |
+| Model credential | None | `XAPI_AI_KEY` |
+| Model | `deepseek-v4-pro` | `XAPI_MODEL` |
+| Sandbox Gateway | `sandbox.xapi.to` | `XAPI_SANDBOX_HOST` |
+| Sandbox credential | None | `XAPI_SANDBOX_KEY` |
+| Sandbox provider | `daytona` | `XAPI_SANDBOX_PROVIDER` |
+| Price cap | `$0.20/hour` | `XAPI_SANDBOX_MAX_HOURLY_USD` |
+
+```bash
+XAPI_SANDBOX_HOST=sandbox.xapi.to \
+XAPI_SANDBOX_PROVIDER=daytona \
+XAPI_MODEL=deepseek-v4-pro \
+npm run example:sandbox:openai
+```
+
+This two-Gateway example may need two keys: `XAPI_SANDBOX_KEY` only accesses the Sandbox Gateway, and
+`XAPI_AI_KEY` only accesses production `ai.xapi.to`. If one production xAPI Key works for both Gateways,
+both can fall back to `XAPI_KEY` → `XAPI_API_KEY` → the CLI config file. The command does not accept
+`--api-key`, and never writes keys into the prompt, the Sandbox, reports or command-line arguments. A successful report should include:
+
+- `finalOutput` contains `SDK_OK=42`;
+- `sandbox.execCount >= 2`;
+- `sandbox.finalState` is `TERMINATED`;
+- `sandbox.auditCounts` includes operations, events, usageSegments and billingPeriods;
+- `sandbox.totalCost` is the final value settled by the server.
+
+## Configure keys
+
+Inject each key through the process environment according to its purpose; don't put keys in source code:
+
+```bash
+export XAPI_SANDBOX_KEY='sk-sandbox-...'
+export XAPI_AI_KEY='sk-ai-...'
+```
+
+Each key is sent only to the xAPI host it is meant for:
+
+| Environment variable | Purpose | Host | Protocol |
+| --- | --- | --- | --- |
+| `XAPI_AI_KEY` | Model inference | `https://ai.xapi.to/v1` | OpenAI Chat Completions compatible |
+| `XAPI_SANDBOX_KEY` | Sandbox compute | `https://sandbox.xapi.to` or `https://sandbox.test.xapi.to` | xAPI Sandbox Consumer API |
+
+<Note>
+  In production, if one xAPI Key has both AI and Sandbox permissions, you can inject the same value into both
+  environment variables. Don't assume a test Sandbox key can call the production AI Gateway; that is exactly why the two settings are separate.
+</Note>
+
+## Full example: DeepSeek + Shell
+
+```ts
+import { OpenAIProvider, Runner } from '@openai/agents';
+import { Manifest, SandboxAgent, shell } from '@openai/agents/sandbox';
+import { XapiAgentsSandboxClient } from 'xapi-to/openai-sandbox';
+
+const sandboxApiKey = process.env.XAPI_SANDBOX_KEY;
+const aiApiKey = process.env.XAPI_AI_KEY;
+if (!sandboxApiKey) throw new Error('XAPI_SANDBOX_KEY is required');
+if (!aiApiKey) throw new Error('XAPI_AI_KEY is required');
+
+// Compute layer: xAPI handles quoting, creation, execution, audit, billing and termination.
+const sandbox = new XapiAgentsSandboxClient({
+  apiKey: sandboxApiKey,
+  sandboxHost: 'sandbox.xapi.to',
+  provider: 'daytona',       // can also be omitted to use the adapter default
+  maxHourlyUsd: 0.20,
+  model: 'deepseek-v4-pro',  // written to instance metadata to correlate logs
+});
+
+// Model layer: ai.xapi.to exposes an OpenAI Chat Completions compatible protocol.
+const modelProvider = new OpenAIProvider({
+  apiKey: aiApiKey,
+  baseURL: 'https://ai.xapi.to/v1',
+  useResponses: false,
+  strictFeatureValidation: true,
+});
+
+// An xAPI Key is not an OpenAI telemetry credential; keep the SDK from sending traces to OpenAI.
+const runner = new Runner({
+  modelProvider,
+  tracingDisabled: true,
+});
+
+const agent = new SandboxAgent({
+  name: 'xAPI DeepSeek sandbox agent',
+  model: 'deepseek-v4-pro',
+  defaultManifest: new Manifest({ root: sandbox.workspaceRoot }),
+  capabilities: [shell()],
+  instructions: [
+    'Work only inside the sandbox workspace.',
+    'Use shell to complete the task.',
+    'Verify the artifact before reporting success.',
+  ].join(' '),
+});
+
+try {
+  const result = await runner.run(
+    agent,
+    'Write SDK_OK=42 to result.txt, then read the file and verify it.',
+    {
+      maxTurns: 8,
+      sandbox: { client: sandbox },
+    },
+  );
+
+  console.log(result.finalOutput);
+} finally {
+  // close() terminates the instance, waits for a terminal state and reads the audit counts and final cost.
+  await sandbox.lastSession?.close();
+}
+```
+
+## Why `useResponses: false` is required
+
+`OpenAIProvider` can drive OpenAI models as well as Chat Completions compatible models.
+`ai.xapi.to/v1/chat/completions` currently implements the OpenAI Chat Completions protocol, so configure:
+
+```ts
+new OpenAIProvider({
+  baseURL: 'https://ai.xapi.to/v1',
+  useResponses: false,
+});
+```
+
+If you keep the default Responses path, the SDK tries to call the Responses API, which this path does not currently use, causing a protocol or
+capability mismatch. `strictFeatureValidation: true` makes unsupported features fail early instead of silently degrading.
+
+## Why tracing is disabled
+
+Model requests and OpenAI SDK tracing are two different destinations:
+
+- `aiApiKey` is used only for `ai.xapi.to`;
+- `sandboxApiKey` is used only for the Sandbox Gateway;
+- neither is a tracing credential for the OpenAI platform;
+- unless you explicitly configure a separate OpenAI telemetry key, set `tracingDisabled: true`.
+
+Don't send your xAPI Key to other domains just to make tracing "stop erroring". If you need observability, use
+AI Logs in the xAPI Console and the Sandbox operations/events/usage/billing logs.
+
+## What the agent actually goes through
+
+A complete run usually includes:
+
+1. Runner hands the task to `deepseek-v4-pro`;
+2. DeepSeek returns a Shell tool call;
+3. `XapiAgentsSandboxClient` gets a quote for the `exec/files` capabilities and creates an instance;
+4. The adapter waits for the instance to reach `RUNNING` and prepares the working directory;
+5. The SDK sends the Shell command to the real Sandbox and gets `exitCode/stdout/stderr`;
+6. The tool result goes back to the model, which can take the next step or give the final answer;
+7. `finally` terminates the instance and reads operations, events, usageSegments and billingPeriods.
+
+The same task produces two sets of logs: model calls are in **Console → AI Logs**, and tool execution and the instance lifecycle are in
+**Console → Sandboxes → Call logs**.
+
+## Current adapter limits
+
+Verified against real resources so far:
+
+- An empty `Manifest`;
+- The SDK `shell()` capability;
+- Quote, create, wait, command execution, terminate;
+- Operation, state, usage and billing audit;
+- Daytona working directory mapping.
+
+Not yet implemented by this adapter:
+
+- Automatically materializing Manifest file entries into the instance;
+- Manifest mounts, snapshots and environment variable mapping;
+- Full translation of other optional Sandbox capabilities in the OpenAI SDK;
+- Automatic detection of arbitrary providers' working directory semantics.
+
+The adapter explicitly rejects unimplemented Manifest entries or environment variables instead of pretending they took effect.
+Your app can still run file and port operations through the xAPI CLI/Consumer API after the instance is created.
+
+## Use the test Sandbox
+
+To test only the Sandbox compute layer, change the host to:
+
+```ts
+const sandbox = new XapiAgentsSandboxClient({
+  apiKey: sandboxApiKey,
+  sandboxHost: 'sandbox.test.xapi.to',
+  provider: 'daytona',
+  model: 'deepseek-v4-pro',
+});
+```
+
+<Warning>
+  This creates a **mixed environment**: the Sandbox is in the test environment, while the model is still on the production AI Gateway at `ai.xapi.to`.
+  There is currently no `ai.test.xapi.to` / `test.xapi.ai`. So model calls show up in AI Logs in the production Console,
+  while Sandbox calls show up in the Sandboxes logs of the `test.xapi.to` Console.
+  The test Sandbox key and the production AI key are usually not the same key; don't call this kind of run "full-path test-only".
+</Warning>
+
+For the full environment matrix, acceptance commands and how to find logs, see [Test environment and logs](/en/sandbox/testing).
+
+## Local development acceptance
+
+In the `xapi-cli` repository that contains the adapter source:
+
+```bash
+npm run typecheck
+npm run build
+
+XAPI_SANDBOX_KEY='sk-sandbox-test-...' \
+XAPI_AI_KEY='sk-ai-production-...' \
+npm run test:sandbox:openai -- \
+  --host sandbox.test.xapi.to \
+  --provider daytona \
+  --model deepseek-v4-pro
+```
+
+The script first probes DeepSeek, then has a real `SandboxAgent` complete a write-and-read task, and finally outputs a redacted JSON
+report and checks the number of active instances. The report never includes the API key.
+
+<Tip>
+  Acceptance can't check only the agent's final answer. At minimum, also verify the Shell marker, the command count, the instance's terminal state,
+  the four audit counts and `activeInstances = 0`.
+</Tip>

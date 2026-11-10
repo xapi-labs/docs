@@ -1,0 +1,62 @@
+---
+title: Product scope and capability model
+subtitle: xAPI unifies Sandbox resources and capabilities; task planning, memory and agent orchestration stay in the application layer.
+---
+
+xAPI Sandbox is the aggregation, governance and billing layer for Sandbox providers. The client describes resources, capabilities and budget.
+The platform places the request safely on a sellable provider and returns a unified, auditable result.
+
+<CardGroup cols={2}>
+  <Card title="xAPI handles" icon="server">
+    Provider / Offering discovery, quotes and selection, lifecycle, `exec/files/ports`, authentication and tenant isolation,
+    idempotency, state and error normalization, billing, bills, logs, history and provider-native extensions.
+  </Card>
+  <Card title="Your application handles" icon="diagram-project">
+    Prompts and the model loop, agent conversations and memory, multi-agent scheduling, job DAGs, task queues, human approval,
+    business retries and result aggregation.
+  </Card>
+</CardGroup>
+
+## Primitives and recipes stay separate
+
+Cloudflare Browser, background processes, Code Interpreter, R2 backups or RunPod connection info can be exposed as
+provider-native extensions, because they are Sandbox primitives with clear inputs and outputs, limits, state effects and
+billing semantics.
+
+"Coding agent", "CI fix", "web audit" and "parallel multi-agent" are recipes that the client builds by combining primitives.
+The Playground and examples show these real uses, but the Gateway does not run the agent loop, store memory or
+decide business steps for the application.
+
+## When a capability counts as available
+
+<Steps>
+  <Step title="Implemented and tested">
+    The adapter driver has code, a schema and automated tests.
+  </Step>
+  <Step title="Deployed and declared">
+    The deployed `/.well-known/xapi-sandbox` manifest declares the capability accurately.
+  </Step>
+  <Step title="Materialized and priced">
+    The Gateway writes the capability into the public Offering; extensions that need billing have published rates.
+  </Step>
+  <Step title="Verified end to end with real calls">
+    Real provider resources are used to verify success, errors, timeouts, audit, settlement and termination, with no leftover instances.
+  </Step>
+</Steps>
+
+<Warning>
+  "Code complete" doesn't mean live. "Not materialized live" means the public Offering doesn't declare the capability yet,
+  so the Gateway correctly rejects quotes or calls that need it. Always go by the live Offering.
+</Warning>
+
+## Capability layers
+
+| Layer | Examples | Compatibility promise |
+| --- | --- | --- |
+| Core lifecycle | create, get, list, terminate | Every Offering must support it |
+| Standard data plane | exec, files, ports, snapshot, suspend/resume | Available only when the Offering declares it, with a unified interface |
+| Provider Extension | `cloudflare.browser.*`, `runpod.connection_info` | Keeps provider semantics; called through unified authentication, audit and billing |
+| Client recipe | Agent coding, CI fixes, web analysis, multi-instance collaboration | Examples, not platform APIs; the application owns them |
+
+Provider capabilities and prices change with deployments. Read [`GET /v1/offerings`](/en/sandbox/api) before calling.
+When you need a fixed budget, call Quote first, then create the instance.

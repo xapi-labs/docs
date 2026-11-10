@@ -4,6 +4,12 @@ instances:
 
 title: xAPI Documentation
 
+# 默认中文；英文译文放在 fern/translations/en/（同路径），没译的页面自动用中文兜底
+translations:
+  - lang: zh
+    default: true
+  - lang: en
+
 logo:
   href: /
   light: ./assets/logo-wordmark-light.svg
@@ -95,7 +101,7 @@ navigation:
       - page: 全部 REST API 与测试
         path: pages/sandbox/api-reference.mdx
         slug: api
-      - api: 逐接口 API Reference
+      - api: API Reference
         slug: api-reference
         icon: fa-solid fa-code
         paginated: true
@@ -129,19 +135,6 @@ navigation:
       - page: 计费与收益
         path: pages/provider/pricing.mdx
         slug: pricing
-      - section: English
-        slug: en
-        collapsed: true
-        contents:
-          - page: Provider onboarding
-            path: pages/provider/en/overview.mdx
-            slug: overview
-          - page: OpenAPI import rules
-            path: pages/provider/en/openapi.mdx
-            slug: openapi
-          - page: Billing and earnings
-            path: pages/provider/en/pricing.mdx
-            slug: pricing
 
   - section: 帮助
     slug: help
@@ -177,6 +170,12 @@ layout:
 default-language: typescript
 
 redirects:
+  - source: /provider/en/overview
+    destination: /en/provider/overview
+  - source: /provider/en/openapi
+    destination: /en/provider/openapi
+  - source: /provider/en/pricing
+    destination: /en/provider/pricing
   - source: /concepts/models
     destination: /ai/models
   - source: /concepts/principles

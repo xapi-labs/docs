@@ -1,0 +1,199 @@
+---
+title: FAQ
+subtitle: Accounts, keys, billing, models and integration troubleshooting — the most common questions and how to handle them.
+---
+
+## Accounts and keys
+
+<AccordionGroup>
+  <Accordion title="How do I get an API key?">
+    Go to the [xapi.to](https://xapi.to) console → **API Keys** → create a new key.
+    The key is **shown only once, when it is created**, so store it safely. A lost key can't be recovered; delete it and create a new one.
+  </Accordion>
+
+  <Accordion title="How many keys can one account create?">
+    There is no hard limit. We recommend issuing a separate key for each use case (team members, CI, agents, different projects)
+    and setting a spending cap for each one with `balanceLimit`,
+    so a problem with one key doesn't affect the whole balance.
+  </Accordion>
+
+  <Accordion title="How do I set a separate limit for a key?">
+    Console → **API Keys** → select the key → set `balanceLimit` (USD).
+    Once the key's total charges reach the cap, further calls return HTTP 402,
+    but the main account balance pool and other keys are **not affected**.
+  </Accordion>
+
+  <Accordion title="What should I do if a key leaks?">
+    Revoke it right away in Console → **API Keys** → Revoke.
+    It stops working immediately. We also recommend checking Usage Records for unusual calls.
+  </Accordion>
+</AccordionGroup>
+
+## Models and protocols
+
+<AccordionGroup>
+  <Accordion title="Which models are supported?">
+    Mainstream models such as Claude, OpenAI, Gemini, DeepSeek, Kimi and GLM are supported,
+    and updated in step with the upstreams. See [Models and pricing](/en/ai/models) for the full list.
+  </Accordion>
+
+  <Accordion title="How should I write the model name?">
+    Use the **native name** of the upstream you choose. For example, on SkyAPI Claude models use hyphens
+    (`claude-opus-4-7`), while OpenRouter-style names use a slash and dots
+    (`anthropic/claude-opus-4.6`).
+
+    Aggregated routing on `ai.xapi.to` does case-insensitive fuzzy matching;
+    a direct upstream subdomain requires an **exact match** with that upstream's supported list.
+  </Accordion>
+
+  <Accordion title="Which protocols are supported?">
+    - **Anthropic Messages** (`POST /v1/messages`): aggregated routing
+    - **OpenAI Chat Completions** (`POST /v1/chat/completions`): direct upstream subdomain
+
+    Any client compatible with these two protocols (Claude Code, Cursor, Codex, Continue and others) can connect directly.
+  </Accordion>
+
+  <Accordion title="Is streaming supported?">
+    Yes. Set `"stream": true` in the request body, and xAPI transparently passes through the upstream's SSE stream.
+
+    **Note**: streaming responses do **not** return the final `X-AI-Cost` in the response headers,
+    because the headers have already been sent to the client when streaming starts.
+    To check the cost, use Console → Usage Records,
+    or parse the `usage` field of the last chunk.
+  </Accordion>
+
+  <Accordion title="Is tool / function calling supported?">
+    Yes. The `tools` and `tool_choice` fields in the request body are passed through to the upstream in full.
+    Actual support depends on the upstream: all Claude models support it, GPT-5.5 supports it,
+    and Gemini is adapted through the OpenAI protocol layer.
+  </Accordion>
+
+  <Accordion title="Is multimodal input supported?">
+    Yes. Pass `image_url` (OpenAI format) or
+    `content: [{type: "image", source: {...}}]` (Anthropic format) in messages,
+    and the gateway passes it through unchanged.
+  </Accordion>
+</AccordionGroup>
+
+## Billing and limits
+
+<AccordionGroup>
+  <Accordion title="How do I top up?">
+    Console → **Billing** → Top up. Crypto (USDT / USDC on BSC,
+    confirmed automatically through the x402 protocol) and credit cards via Stripe are supported.
+  </Accordion>
+
+  <Accordion title="How do I check the cost of each call?">
+    - **Non-streaming**: the `X-AI-Cost` response header (USD, 8 decimal places)
+    - **Streaming**: Console → **Usage Records**, the `cost` field of that row
+    - **Bulk queries**: the console can filter by date, key and model, and export CSV
+  </Accordion>
+
+  <Accordion title="How is the price calculated?">
+    Dynamic per-model pricing:
+
+    ```
+    cost = inputTokens × inputPrice
+        + outputTokens × outputPrice
+        + cacheCreationTokens × cacheCreationPrice
+        + cacheReadTokens × cacheReadPrice
+    ```
+
+    Some models (such as Claude with `>200K` context) have tiered pricing.
+    See [Models and pricing](/en/ai/models) for the full price list.
+  </Accordion>
+
+  <Accordion title="What happens when my balance runs out?">
+    Further calls return HTTP 402 right away; the balance is **never** charged below zero.
+    Service resumes after you top up. Amounts already charged are not refunded.
+  </Accordion>
+
+  <Accordion title="Are failed requests charged?">
+    Usually **not**. xAPI uses a two-phase hold → settlement:
+
+    | Scenario | Charged? |
+    | --- | --- |
+    | Upstream 4xx / 5xx / timeout | No, the full hold is released |
+    | Gateway error (401 / 402 / 400) | No, the request never reached the hold phase |
+    | Client interrupts a non-streaming request | No |
+    | **Client interrupts a streaming request** | **Yes**, charged by an estimate based on the output streamed so far |
+  </Accordion>
+
+</AccordionGroup>
+
+## Integration troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Claude Code still uses the official endpoint">
+    - When both `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are set, the former takes precedence.
+      Run `unset ANTHROPIC_API_KEY` and restart the terminal
+    - The current shell hasn't loaded the new environment variables: `source ~/.zshrc`
+    - Type `/status` in the session to confirm the current base URL
+  </Accordion>
+
+  <Accordion title="Cursor / Codex / Windsurf Verify fails">
+    - The base URL is missing the `/v1` suffix. Correct format: `https://ai.xapi.to/v1`
+    - Put `sk-xapi-...` straight into the API key field; the client sends it as `Authorization: Bearer`, which xAPI accepts directly
+    - The key contains spaces or invisible characters; copy and paste it again
+    - A company network is blocking the request: turn off VPN / proxy and try again
+  </Accordion>
+
+  <Accordion title="400 Model is not configured for this endpoint">
+    The model isn't in the selected upstream's supported list:
+
+    1. Switch to a model explicitly listed in the [model list](/en/ai/models)
+    2. Or use aggregated routing on `ai.xapi.to` instead (it supports fuzzy matching across upstreams)
+  </Accordion>
+
+  <Accordion title="401 Unauthorized">
+    - The key is mistyped or contains spaces.
+      Check the character count with `echo -n "$XAPI_KEY" | wc -c`
+    - The key isn't active yet or has been revoked. Check its status in Console → API Keys
+    - Every endpoint accepts one of three headers: `xapi-key`, `Authorization: Bearer` or `x-api-key`
+  </Accordion>
+
+  <Accordion title="429 rate_limit_error">
+    Upstream rate limit. Aggregated routing automatically retries on another healthy upstream
+    (confirm with `X-Routing-Attempts > 1`).
+    With a direct upstream, wait a few seconds and retry, or switch to another upstream.
+  </Accordion>
+</AccordionGroup>
+
+## Privacy and security
+
+<AccordionGroup>
+  <Accordion title="Does xAPI store prompts or responses?">
+    **No.** xAPI records only metadata: model, token counts, amount charged,
+    HTTP status code and response time, for billing and monitoring.
+  </Accordion>
+
+  <Accordion title="How are keys protected in transit?">
+    Everything is encrypted with HTTPS. The gateway checks keys against a cache using SHA-256 hashes,
+    and **plaintext keys are never written to logs**.
+  </Accordion>
+
+  <Accordion title="Can upstreams see my xAPI key?">
+    No. When calling upstreams, xAPI uses upstream credentials maintained by the platform
+    (stored AES-encrypted in the database). `sk-xapi-...` is only used inside xAPI to identify users.
+  </Accordion>
+</AccordionGroup>
+
+## General troubleshooting steps
+
+<Steps>
+  <Step title="Check X-XAPI-Source">
+    - `provider` → an error returned by the upstream; check the upstream's original message in the response body
+    - `platform` → a gateway error (authentication / balance / validation, etc.)
+  </Step>
+  <Step title="Note the X-XAPI-Request-Id">
+    Include it when you submit a ticket so we can find the request in the logs.
+  </Step>
+  <Step title="Check X-Routing-Attempts">
+    `> 1` means an automatic failover happened, so an upstream may be unstable.
+  </Step>
+  <Step title="Check Usage Records">
+    Console → **Usage Records** is the authoritative source for reconciliation and troubleshooting.
+  </Step>
+</Steps>
+
+If you still can't find the cause, submit a ticket at [xapi.to](https://xapi.to) and include the Request ID.

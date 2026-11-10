@@ -1,0 +1,44 @@
+---
+title: Continue.dev
+subtitle: Connect Continue, the VS Code and JetBrains plugin, to xAPI with a standard OpenAI provider configuration.
+---
+
+[Continue.dev](https://continue.dev) is an open-source AI assistant for VS Code and JetBrains.
+A standard OpenAI provider configuration is all you need to connect it to xAPI.
+
+<Steps>
+  <Step title="Install">
+    - **VS Code**: Extensions → search for "Continue" → Install
+    - **JetBrains**: Plugins → search for "Continue" → Install
+  </Step>
+
+  <Step title="Configure ~/.continue/config.yaml">
+    ```yaml
+    models:
+      - name: GPT-5.5 (xAPI)
+        provider: openai
+        model: gpt-5.5
+        apiBase: https://ai.xapi.to/v1
+        apiKey: sk-xapi-...
+
+      - name: Claude Opus 4.7 (xAPI)
+        provider: openai
+        model: claude-opus-4-7
+        apiBase: https://ai.xapi.to/v1
+        apiKey: sk-xapi-...
+    ```
+
+    <Note>
+      Continue sends requests with `Authorization: Bearer ${apiKey}`, which is fully compatible with xAPI.
+    </Note>
+  </Step>
+
+  <Step title="Verify">
+    Select a configured model in the Continue sidebar and send a test request.
+    You can see this call in the [xapi.to](https://xapi.to) console → Usage Records.
+  </Step>
+</Steps>
+
+## Pin to a specific upstream (optional)
+
+Change the `apiBase` field. For each upstream's subdomain, see [Models and pricing](/en/ai/models).

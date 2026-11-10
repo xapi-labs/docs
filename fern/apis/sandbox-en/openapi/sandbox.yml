@@ -1,0 +1,1985 @@
+openapi: 3.0.3
+info:
+  title: xAPI Sandbox API
+  version: 1.0.0
+  description: |
+    REST API for creating, operating and auditing isolated cloud Sandboxes.
+
+    The test environment also provisions real provider resources and incurs charges. After you create an instance, you must call terminate
+    and wait for the instance to reach TERMINATED or FAILED.
+servers:
+  - url: https://sandbox.xapi.to
+    x-fern-server-name: Production
+    description: Production Gateway; the default environment for docs and generated code.
+  - url: https://sandbox.test.xapi.to
+    x-fern-server-name: Test
+    description: Test Gateway; connects to real providers. Select it explicitly only for acceptance and integration testing.
+tags:
+  - name: Discovery
+    x-displayName: Discovery and quotes
+    description: View environments, resource specs and prices without creating an instance.
+  - name: Lifecycle
+    x-displayName: Instance lifecycle
+    description: Create, inspect, suspend, resume and terminate Sandboxes.
+  - name: Execution
+    x-displayName: Execution, files and ports
+    description: Run commands, handle files and access ports inside a running Sandbox.
+  - name: Audit
+    x-displayName: History and audit
+    description: Query instance history, operations, events, usage segments and billing periods.
+security:
+  - XapiKey: []
+paths:
+  /v1/offerings:
+    get:
+      operationId: listOfferings
+      summary: List offerings
+      description: Returns the resources, capabilities, lifecycle and estimated prices that providers currently declare. This endpoint doesn't create resources.
+      tags: [Discovery]
+      security: []
+      x-fern-examples:
+        - name: Currently available offerings
+          response:
+            body:
+              - id: 11111111-1111-4111-8111-111111111111
+                name: General purpose Sandbox
+                description: Isolated CPU Sandbox with shell, files and ports
+                region: null
+                resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3, snapshotGiB: 0 }
+                capabilities: { exec: true, files: true, ports: true, snapshot: true }
+                lifecycle: { suspension: { supported: true, preservesFilesystem: true } }
+                billing: { currency: USD, estimatedHourlyUsdByState: { RUNNING: '0.07693488' } }
+                rollingWindowSeconds: 300
+                shutdownGraceSeconds: 30
+                retentionWindowSeconds: 600
+                provider: { name: Example Sandbox Provider, logoUrl: null }
+      responses:
+        '200':
+          description: List of available offerings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Offering'
+  /v1/environments:
+    get:
+      operationId: listEnvironments
+      summary: List environment presets
+      description: |
+        Aggregates the stable runtime environments explicitly declared by currently available Offerings, for use in requirements.environmentId.
+        An empty array means no sellable Offering currently publishes an environment preset; it isn't a service error. In that case, omit
+        environmentId when quoting or creating, and use capabilities, resource and region constraints instead.
+      tags: [Discovery]
+      security: []
+      x-fern-examples:
+        - name: No environment presets yet
+          response:
+            body: []
+        - name: After a provider publishes a Python environment
+          response:
+            body:
+              - id: python-3.12
+                name: Python 3.12
+                description: Python environment for isolated workloads
+                image: python:3.12
+                os: linux
+                architecture: amd64
+                language: python
+                languageVersion: '3.12'
+                offeringCount: 3
+      responses:
+        '200':
+          description: List of environments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Environment'
+  /v1/quotes:
+    post:
+      operationId: createQuote
+      summary: Get a Sandbox quote
+      description: |
+        Selects a compatible offering by capabilities, resources and budget, and returns a short-lived quoteId. It doesn't create an instance,
+        but you should use the returned quoteId to create one soon.
+      tags: [Discovery]
+      x-fern-examples:
+        - name: Quote for shell and file capabilities
+          request:
+            requirements:
+              capabilities: [exec, files]
+              cpu: { min: 1 }
+              memoryGiB: { min: 1 }
+            maxEstimatedHourlyUsd: '0.20'
+          response:
+            body:
+              quoteId: eyJhbGciOiJIUzI1NiJ9.REDACTED
+              expiresAt: '2026-08-13T08:30:00.000Z'
+              offering:
+                id: 11111111-1111-4111-8111-111111111111
+                name: General purpose Sandbox
+                resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+                capabilities: { exec: true, files: true, ports: true }
+              estimatedHourlyUsd: '0.07693488'
+              usageReservationUsd: '0.00641124'
+              shutdownReservationUsd: '0.00064112'
+              initialReservationUsd: '0.00705236'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+            example:
+              requirements:
+                capabilities: [exec, files]
+                cpu: { min: 1 }
+                memoryGiB: { min: 1 }
+              maxEstimatedHourlyUsd: '0.20'
+      responses:
+        '201':
+          description: Quote returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quote'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+  /v1/sandboxes:
+    get:
+      operationId: listSandboxes
+      summary: List account instances
+      description: |
+        Returns snapshots of every Sandbox the current account owns, including active instances and `TERMINATED` / `FAILED`
+        terminal records. This endpoint has no pagination or state filter. It's handy for quickly finding a known instance, but a non-empty result doesn't mean resources are
+        still running. For a cleanup gate, call `GET /v1/sandbox-history?state=ACTIVE` and confirm the result doesn't
+        include this run's instance.
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: Account has no instance records
+          response:
+            body: []
+      responses:
+        '200':
+          description: All instance snapshots for the account (including terminal records)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Sandbox'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createSandbox
+      summary: Create a Sandbox instance
+      description: |
+        Creates a Sandbox backed by a real provider that incurs charges. Getting a quote doesn't create resources; only after you call this endpoint
+        does the service reserve funds and start provisioning the instance.
+
+        ## Choose a selection method
+
+        `selection` must contain exactly one of the following methods:
+
+        | Method | When to use | Notes |
+        | --- | --- | --- |
+        | `quoteId` | **Recommended.** Call `POST /v1/quotes` with your capabilities, resources and budget first, check the match, then create right away | Quotes are short-lived and valid for one logical create only; get a new quote if it expires or its offering changes |
+        | `offeringId` | You've checked `GET /v1/offerings` and want to pin one specific offering | No re-selection by requirements, and no `maxEstimatedHourlyUsd` price cap at create time |
+        | `requirements` | You want the service to pick a compatible offering at create time, or you allow the provider/offering to change | You can also pass `maxEstimatedHourlyUsd` as a hard price cap; returns `404` when no compatible offering exists |
+
+        `maxEstimatedHourlyUsd` applies only to the `requirements` method. If you need a shell, files, ports or a GPU,
+        declare the matching capability/resources explicitly; don't assume every offering supports them.
+
+        ## Idempotent retries
+
+        Generate one stable, unique `idempotencyKey` (up to 160 characters) per logical create, and reuse the same value when the request times out,
+        the connection drops or no response arrives. That way you get back the same create instead of accidentally creating a second billed instance.
+
+        - Retrying the same logical create: reuse the original key and keep `selection`, `policy` and other create parameters unchanged.
+        - Creating another instance: use a new key.
+        - With `quoteId`, retries with the same key can reuse the quote; reusing the same quote with a different key returns `409`.
+        - The same key with an incompatible selection or policy returns `409 Conflict`.
+
+        ## After `202 Accepted`
+
+        `202` only means the service has accepted the create request. The response returns the instance `id` right away. At this point
+        `observedState` is usually `PROVISIONING`, and **you can't run commands or read or write files yet**.
+
+        1. Save the `id` from the response right away. It's the only identifier for later queries, operations and cleanup of the instance.
+        2. Poll `GET /v1/sandboxes/{id}`, for example every 2 seconds, and set an overall client timeout (5 minutes or less is recommended).
+        3. `RUNNING` means the instance is ready; only then can you call the exec, files or ports endpoints.
+        4. `FAILED` and `TERMINATED` are terminal states, so stop waiting for `RUNNING`; check the operation and event audit to find the cause.
+        5. A client-side wait timeout doesn't mean the instance wasn't created. Look it up by `id` and clean it up first; don't blindly retry with a new key.
+
+        ## Billing and cleanup
+
+        Before creating, the service checks your account balance and reserves the initial running cost and the shutdown cost. An insufficient balance returns `402`.
+        Instances can incur charges while provisioning or running; an initial `totalCost` of `0` in the response doesn't mean it stays free.
+
+        Put `POST /v1/sandboxes/{id}/terminate` in a `finally` block, and keep polling the instance until
+        `observedState` is `TERMINATED` or `FAILED`. Finally, read `totalCost`, operations, events,
+        usage segments and billing periods to confirm there are no open billing periods or leftover active instances.
+
+        ## Common failures
+
+        - `400`: invalid selection method, invalid requirements, an invalid or expired quote, or an offering that doesn't support `resumeOnAccess`.
+        - `402`: insufficient balance to cover the initial reservation.
+        - `404`: the offering is unavailable, or no offering matches the requirements.
+        - `409`: the quoted offering has changed, the quote was used by another logical create, the active instance limit is reached, idempotency parameters conflict, or the provider temporarily can't create instances.
+        - `429`: too many requests; follow the retry hint in the response and keep reusing the original `idempotencyKey`.
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: Create with quoteId (recommended)
+          request:
+            selection: { quoteId: REPLACE_WITH_QUOTE_ID }
+            metadata: { client: fern-docs, purpose: sandbox-api-test }
+            idempotencyKey: docs-create-quote-20260813-001
+            policy: { resumeOnAccess: false }
+          response:
+            body:
+              id: 33333333-3333-4333-8333-333333333333
+              idempotencyKey: docs-create-quote-20260813-001
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: PROVISIONING
+              totalCost: '0'
+              createdAt: '2026-08-13T08:19:50.000Z'
+              updatedAt: '2026-08-13T08:19:50.000Z'
+        - name: Create with a pinned offeringId
+          request:
+            selection: { offeringId: 11111111-1111-4111-8111-111111111111 }
+            metadata: { client: fern-docs, purpose: pinned-offering-test }
+            idempotencyKey: docs-create-offering-20260813-001
+            policy: { resumeOnAccess: false }
+          response:
+            body:
+              id: 44444444-4444-4444-8444-444444444444
+              idempotencyKey: docs-create-offering-20260813-001
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: PROVISIONING
+              totalCost: '0'
+              createdAt: '2026-08-13T08:21:00.000Z'
+              updatedAt: '2026-08-13T08:21:00.000Z'
+        - name: Select dynamically by requirements
+          request:
+            selection:
+              requirements:
+                capabilities: [exec, files]
+                cpu: { min: 1 }
+                memoryGiB: { min: 1 }
+              maxEstimatedHourlyUsd: '0.20'
+            metadata: { client: fern-docs, purpose: dynamic-selection-test }
+            idempotencyKey: docs-create-requirements-20260813-001
+            policy: { resumeOnAccess: false }
+          response:
+            body:
+              id: 55555555-5555-4555-8555-555555555555
+              idempotencyKey: docs-create-requirements-20260813-001
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: PROVISIONING
+              totalCost: '0'
+              createdAt: '2026-08-13T08:22:00.000Z'
+              updatedAt: '2026-08-13T08:22:00.000Z'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSandboxRequest'
+            example:
+              selection:
+                quoteId: REPLACE_WITH_QUOTE_ID
+              metadata:
+                client: fern-docs
+                purpose: sandbox-api-test
+              idempotencyKey: docs-test-change-me
+              policy:
+                resumeOnAccess: false
+      responses:
+        '202':
+          description: The create request was accepted and the instance record is returned; the instance is usually still PROVISIONING and can't run tasks yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/sandboxes/{id}:
+    get:
+      operationId: getSandbox
+      summary: Get instance details
+      description: Returns observedState, an operations summary, usage, billing periods and the server-settled totalCost.
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: Running instance
+          path-parameters:
+            id: 33333333-3333-4333-8333-333333333333
+          response:
+            body:
+              id: 33333333-3333-4333-8333-333333333333
+              idempotencyKey: docs-test-change-me
+              offeringId: 11111111-1111-4111-8111-111111111111
+              desiredState: RUNNING
+              observedState: RUNNING
+              lifecyclePhase: RUNNING
+              lastConfirmedState: RUNNING
+              stateVersion: 1
+              policy: { resumeOnAccess: false }
+              resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+              totalCost: '0.00021371'
+              createdAt: '2026-08-13T08:19:50.000Z'
+              updatedAt: '2026-08-13T08:20:00.000Z'
+              auditCounts: { operations: 2, events: 1, usageSegments: 1, billingPeriods: 2 }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      responses:
+        '200':
+          description: Instance details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/sandboxes/{id}/suspend:
+    post:
+      operationId: suspendSandbox
+      summary: Suspend an instance
+      description: Call only when offering.lifecycle.suspension.supported is true. After the operation completes, poll the instance until it's SUSPENDED.
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: Suspend an instance
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { idempotencyKey: docs-suspend-example }
+          response:
+            body:
+              id: 22222222-2222-4222-8222-222222222222
+              idempotencyKey: docs-suspend-example
+              type: SUSPEND
+              status: SUCCEEDED
+              expectedState: SUSPENDED
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        $ref: '#/components/requestBodies/StateAction'
+      responses:
+        '201':
+          description: Suspend operation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/resume:
+    post:
+      operationId: resumeSandbox
+      summary: Resume an instance
+      description: After submitting the resume operation, poll the instance until observedState is RUNNING.
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: Resume an instance
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { idempotencyKey: docs-resume-example }
+          response:
+            body:
+              id: 22222222-2222-4222-8222-222222222223
+              idempotencyKey: docs-resume-example
+              type: RESUME
+              status: SUCCEEDED
+              expectedState: RUNNING
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        $ref: '#/components/requestBodies/StateAction'
+      responses:
+        '201':
+          description: Resume operation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/terminate:
+    post:
+      operationId: terminateSandbox
+      summary: Terminate an instance
+      description: |
+        Stops resources and billing. After submitting, keep querying the instance until observedState is TERMINATED or FAILED.
+        Test flows should put this call in a finally/trap block.
+      tags: [Lifecycle]
+      x-fern-examples:
+        - name: Terminate an instance
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { idempotencyKey: docs-terminate-example }
+          response:
+            body:
+              id: 22222222-2222-4222-8222-222222222224
+              idempotencyKey: docs-terminate-example
+              type: TERMINATE
+              status: SUCCEEDED
+              expectedState: TERMINATED
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        $ref: '#/components/requestBodies/StateAction'
+      responses:
+        '201':
+          description: Terminate operation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/commands:
+    post:
+      operationId: executeCommand
+      summary: Run a shell command
+      description: |
+        Requires the instance to be RUNNING and the offering to declare the exec capability. A non-zero exitCode from a foreground command means the remote command failed,
+        not that the HTTP request failed. To start a long-running process such as a web server, pass background=true, but first confirm
+        offering.capabilities.backgroundExec=true. In that case the response means the background session was accepted, not that the process is already listening on the port.
+      tags: [Execution]
+      x-fern-examples:
+        - name: Verify shell output
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request:
+            command: "python3 -c \"print('XAPI_SANDBOX_OK=42')\""
+            timeoutSeconds: 60
+          response:
+            body:
+              exitCode: 0
+              stdout: "XAPI_SANDBOX_OK=42\n"
+              stderr: ''
+              truncated: false
+        - name: Start a background web server
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request:
+            command: "python3 -m http.server 25319 --bind 0.0.0.0"
+            background: true
+          response:
+            body:
+              exitCode: 0
+              stdout: ''
+              stderr: ''
+              truncated: false
+              background:
+                sessionId: xapi-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+                commandId: aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommandRequest'
+            example:
+              command: "python3 -c \"print('XAPI_SANDBOX_OK=42')\""
+              timeoutSeconds: 60
+      responses:
+        '201':
+          description: Command result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommandResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/files:
+    get:
+      operationId: readFile
+      summary: Read a file
+      description: Reads UTF-8 text or base64-encoded binary content from a running instance. The path must be inside the instance workspace.
+      tags: [Execution]
+      x-fern-examples:
+        - name: Read a text artifact
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          query-parameters: { path: result.txt, encoding: utf8 }
+          response:
+            body: { path: result.txt, content: XAPI_SANDBOX_OK=42, encoding: utf8 }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: path
+          in: query
+          required: true
+          description: File path relative to the Sandbox workspace; it can't contain `..` or other parent-directory segments.
+          schema: { type: string, maxLength: 4096 }
+          example: result.txt
+        - name: encoding
+          in: query
+          description: Encoding of the returned content. Use utf8 for text and base64 for binary files; content has no data URI prefix.
+          schema: { type: string, enum: [utf8, base64], default: utf8 }
+      responses:
+        '200':
+          description: File content
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: writeFile
+      summary: Write a file
+      description: Writes UTF-8 text or base64-encoded content to a running instance. Use it to upload task inputs and scripts.
+      tags: [Execution]
+      x-fern-examples:
+        - name: Write a task input
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          request: { path: input.txt, content: Hello from the xAPI Sandbox API Explorer., encoding: utf8 }
+          response:
+            body: { path: input.txt, written: true }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileWriteRequest' }
+            example:
+              path: input.txt
+              content: Hello from the xAPI Sandbox API Explorer.
+              encoding: utf8
+      responses:
+        '201':
+          description: Write result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileWriteResult' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/sandboxes/{id}/files/list:
+    get:
+      operationId: listFiles
+      summary: List files
+      description: Lists directories and files in the instance workspace up to a set depth. Useful for confirming paths before reading artifacts.
+      tags: [Execution]
+      x-fern-examples:
+        - name: List the workspace
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          query-parameters: { path: '.', depth: 2 }
+          response:
+            body:
+              entries:
+                - { path: input.txt, type: file, size: 45 }
+                - { path: result.txt, type: file, size: 19 }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: path
+          in: query
+          required: true
+          description: Workspace directory to list; use `.` for the workspace root.
+          schema: { type: string, maxLength: 4096 }
+          example: .
+        - name: depth
+          in: query
+          description: Maximum recursion depth, 1–20; larger values may return more entries.
+          schema: { type: integer, minimum: 1, maximum: 20, example: 2 }
+      responses:
+        '200':
+          description: File entries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileListResult' }
+  /v1/sandboxes/{id}/ports/{port}:
+    get:
+      operationId: getPortUrl
+      summary: Get a port URL
+      description: A service inside the instance must already be listening on the port, and the offering must declare the ports capability.
+      tags: [Execution]
+      x-fern-examples:
+        - name: Get port 8080
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333, port: 8080 }
+          response:
+            body:
+              port: 8080
+              url: https://preview.example.invalid
+              token: REDACTED
+              headers: {}
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: port
+          in: path
+          required: true
+          description: TCP port the app inside the Sandbox is actually listening on; getting the URL doesn't start the service for you.
+          schema: { type: integer, minimum: 1, maximum: 65535 }
+          example: 8080
+      responses:
+        '200':
+          description: Public URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortResult' }
+  /v1/sandboxes/{id}/extensions/{extensionId}:
+    post:
+      operationId: invokeExtension
+      summary: Call a provider extension
+      description: Invokes only extensions declared by the offering, such as runpod.connection_info.
+      tags: [Execution]
+      x-fern-examples:
+        - name: Get RunPod connection info
+          path-parameters:
+            id: 33333333-3333-4333-8333-333333333333
+            extensionId: runpod.connection_info
+          request: { input: {}, idempotencyKey: docs-extension-example }
+          response:
+            body:
+              result: { ready: true, connectionType: provider-managed }
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: extensionId
+          in: path
+          required: true
+          description: Must come from offering.capabilities.extensionIds; input/output shapes can differ between providers.
+          schema: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$' }
+          example: runpod.connection_info
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtensionRequest'
+            example:
+              input: {}
+              idempotencyKey: docs-extension-change-me
+      responses:
+        '201':
+          description: Extension output
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExtensionResult' }
+  /v1/sandbox-history:
+    get:
+      operationId: listSandboxHistory
+      summary: Get instance history
+      description: Paginated query of active or historical instances, for cleanup gates, cost reconciliation and troubleshooting.
+      tags: [Audit]
+      x-fern-examples:
+        - name: Query terminal history
+          query-parameters: { state: HISTORY, page: 1, pageSize: 20 }
+          response:
+            body:
+              items: []
+              total: 33
+              page: 1
+              pageSize: 20
+              totalPages: 2
+              stateCounts: { TERMINATED: 32, FAILED: 1 }
+      parameters:
+        - name: state
+          in: query
+          description: |
+            State scope. ALL=everything; ACTIVE=instances not yet terminated; HISTORY=TERMINATED/FAILED;
+            any other value returns only that observedState.
+          schema:
+            type: string
+            enum: [ALL, ACTIVE, HISTORY, PROVISIONING, RUNNING, SUSPENDED, TERMINATED, FAILED, UNKNOWN]
+            default: ALL
+        - name: search
+          in: query
+          description: Text search by instance ID, idempotency key, offering name or provider name.
+          schema: { type: string, maxLength: 160 }
+        - name: provider
+          in: query
+          description: Filter history by provider name or service identifier.
+          schema: { type: string, maxLength: 160 }
+        - name: from
+          in: query
+          description: Lower bound on creation time, ISO 8601 date-time, inclusive.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Upper bound on creation time, ISO 8601 date-time, inclusive.
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          description: Page number, starting at 1.
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: Records per page, 1–100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Paginated history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HistoryPage' }
+  /v1/sandboxes/{id}/audit:
+    get:
+      operationId: getSandboxAudit
+      summary: Get an audit stream
+      description: Queries operations, events, usageSegments or billingPeriods, one stream at a time.
+      tags: [Audit]
+      x-fern-examples:
+        - name: Query the operations audit
+          path-parameters: { id: 33333333-3333-4333-8333-333333333333 }
+          query-parameters: { kind: operations, page: 1, pageSize: 100 }
+          response:
+            body:
+              kind: operations
+              items:
+                - id: 22222222-2222-4222-8222-222222222224
+                  type: TERMINATE
+                  status: SUCCEEDED
+                  expectedState: TERMINATED
+              total: 5
+              page: 1
+              pageSize: 100
+              totalPages: 1
+      parameters:
+        - $ref: '#/components/parameters/SandboxId'
+        - name: kind
+          in: query
+          required: true
+          description: |
+            Audit stream type: operations=user/system operations; events=provider state events;
+            usageSegments=usage split by state; billingPeriods=fund reservations and final settlement.
+          schema:
+            type: string
+            enum: [operations, events, usageSegments, billingPeriods]
+          example: operations
+        - name: page
+          in: query
+          description: Audit page number, starting at 1.
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: Audit records per page, 1–100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Paginated audit records
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+components:
+  securitySchemes:
+    XapiKey:
+      type: apiKey
+      in: header
+      name: XAPI-Key
+      description: API key created in the xAPI Console. It's sent only to *.xapi.to.
+  parameters:
+    SandboxId:
+      name: id
+      in: path
+      required: true
+      description: xAPI Sandbox instance UUID.
+      schema: { type: string, format: uuid }
+      example: 00000000-0000-4000-8000-000000000000
+  requestBodies:
+    StateAction:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              idempotencyKey:
+                type: string
+                maxLength: 160
+                description: Idempotency key for this state operation. Reuse the original value for the same action when the response is uncertain; use a new value for a new action.
+          example:
+            idempotencyKey: docs-action-change-me
+  responses:
+    BadRequest:
+      description: Invalid request parameters or no compatible offering
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PaymentRequired:
+      description: Insufficient account balance or key quota
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: The instance or resource doesn't exist or doesn't belong to the current account
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: The instance state doesn't allow this operation, or a state change is already in progress
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Instance creation rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      description: Standard error shape used by all non-2xx responses.
+      properties:
+        statusCode:
+          type: integer
+          description: Numeric HTTP status code, such as 400, 401, 402, 404, 409 or 429.
+        message:
+          description: Error reason for the caller; on validation failure it may be an array of messages.
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+        error:
+          type: string
+          description: HTTP error category, such as Bad Request, Unauthorized or Conflict.
+      example:
+        statusCode: 401
+        message: Missing or invalid XAPI-Key
+        error: Unauthorized
+    MinimumRequirement:
+      type: object
+      description: Minimum requirement for a resource; the service may pick an offering with a higher value but never a lower one.
+      required: [min]
+      properties:
+        min:
+          type: number
+          minimum: 0
+          description: Minimum allowed resource amount. CPU is counted in vCPUs; for memory and disk the unit is set by the parent field.
+    GpuRequirement:
+      type: object
+      description: GPU count and optional model constraint; GPU instances usually cost more, so set a price cap too.
+      required: [count]
+      properties:
+        count:
+          type: integer
+          minimum: 1
+          maximum: 1024
+          description: Minimum number of GPUs required.
+        model:
+          type: string
+          maxLength: 120
+          description: Desired GPU model, or a model name the provider recognizes; omit it to allow any model.
+    Requirements:
+      type: object
+      description: Resource, environment and capability constraints. Resources you don't declare use the selected offering's defaults.
+      properties:
+        environmentId:
+          type: string
+          maxLength: 120
+          description: Preset environment ID returned by GET /v1/environments, such as python-3.12; matches only offerings that support that environment.
+        cpu:
+          allOf:
+            - $ref: '#/components/schemas/MinimumRequirement'
+          description: Minimum number of vCPUs.
+        memoryGiB:
+          allOf:
+            - $ref: '#/components/schemas/MinimumRequirement'
+          description: Minimum memory, in GiB.
+        volumeGiB:
+          allOf:
+            - $ref: '#/components/schemas/MinimumRequirement'
+          description: Minimum persistent/working volume size, in GiB; retention behavior depends on the offering's lifecycle declaration.
+        gpu:
+          allOf:
+            - $ref: '#/components/schemas/GpuRequirement'
+          description: Minimum GPU count and model requirement.
+        regions:
+          type: array
+          description: Allowlist of regions where the instance may be created; matching any one of them is enough.
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, maxLength: 120 }
+        capabilities:
+          type: array
+          description: |
+            Capability names that must be present. Common values: exec=run commands, backgroundExec=long-running background commands,
+            files=file read/write, ports=port access, snapshot=snapshots; for extension capabilities, the live offering declaration is authoritative.
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, maxLength: 160 }
+    QuoteRequest:
+      type: object
+      description: Only matches an offering, checks the budget and issues a short-lived quote; it doesn't create or bill an instance.
+      required: [requirements]
+      properties:
+        requirements:
+          allOf:
+            - $ref: '#/components/schemas/Requirements'
+          description: Environment, resource, region and capability constraints for this task.
+        maxEstimatedHourlyUsd:
+          type: string
+          pattern: '^\d+(?:\.\d{1,18})?$'
+          description: Hard cap on the estimated hourly cost, as a USD decimal string; no quote is issued if no compatible offering is under the cap.
+          example: '0.20'
+      example:
+        requirements:
+          capabilities: [exec, files]
+          cpu: { min: 1 }
+          memoryGiB: { min: 1 }
+        maxEstimatedHourlyUsd: '0.20'
+    Selection:
+      type: object
+      description: |
+        Instance offering selector. Provide exactly one of quoteId, offeringId or requirements.
+        Getting a quote first and passing quoteId is recommended; use requirements only when you need matching at create time.
+      properties:
+        quoteId:
+          type: string
+          maxLength: 8192
+          description: Short-lived quote token returned by POST /v1/quotes. Use it soon, before expiresAt; get a separate quote for each logical create. Retries with the same idempotencyKey can reuse it.
+        offeringId:
+          type: string
+          format: uuid
+          description: Pins a specific offering returned by GET /v1/offerings, with no dynamic re-selection.
+        requirements:
+          allOf:
+            - $ref: '#/components/schemas/Requirements'
+          description: Dynamically selects a compatible offering at create time by capability, resource, environment and region constraints.
+        maxEstimatedHourlyUsd:
+          type: string
+          pattern: '^\d+(?:\.\d{1,18})?$'
+          description: Hard cap on the estimated hourly price, used only with requirements; no instance is created above the cap.
+          example: '0.20'
+    CreateSandboxRequest:
+      type: object
+      required: [selection, idempotencyKey]
+      description: |
+        Creates a real, billed instance. Use one unique idempotencyKey per logical create; safe retries of the same create must reuse it.
+      properties:
+        selection:
+          allOf:
+            - $ref: '#/components/schemas/Selection'
+          description: Exactly one of quoteId, offeringId or requirements; they can't be combined.
+        policy:
+          type: object
+          description: Instance access and lifecycle policy. Before using it, confirm the target offering declares support for the policy.
+          properties:
+            resumeOnAccess:
+              type: boolean
+              default: false
+              description: Whether to resume a suspended instance automatically on access; creation fails if the offering doesn't support it.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Non-sensitive metadata for correlating clients, tasks or model logs. Don't put API keys, tokens or other secrets here.
+        idempotencyKey:
+          type: string
+          maxLength: 160
+          description: |
+            Stable, unique key for this logical create. Reuse the original value and parameters when the result is uncertain; use a new value to create another instance.
+      example:
+        selection:
+          quoteId: REPLACE_WITH_QUOTE_ID
+        policy:
+          resumeOnAccess: false
+        metadata:
+          client: fern-docs
+          purpose: sandbox-api-test
+        idempotencyKey: docs-test-change-me
+    Environment:
+      type: object
+      description: Standard runtime environment that can be referenced in requirements.environmentId.
+      required: [id, name, offeringCount]
+      properties:
+        id:
+          type: string
+          description: Stable environment identifier; pass it as requirements.environmentId when quoting or creating.
+        name:
+          type: string
+          description: Display name of the environment.
+        description:
+          type: string
+          description: What the environment is for and which tools it includes.
+        image:
+          type: string
+          description: Image or template identifier for the environment; informational only, and not guaranteed to be pullable by the caller.
+        os:
+          type: string
+          description: Operating system name, such as linux.
+        architecture:
+          type: string
+          description: CPU architecture, such as amd64 or arm64.
+        language:
+          type: string
+          description: Main preinstalled programming language, such as python or node.
+        languageVersion:
+          type: string
+          description: Version of the main programming language.
+        cuda:
+          type: string
+          description: CUDA version; only GPU environments may return it.
+        framework:
+          type: string
+          description: Name of the main preinstalled compute/machine learning framework.
+        frameworkVersion:
+          type: string
+          description: Version of the main framework.
+        offeringCount:
+          type: integer
+          description: Number of active offerings that currently provide this environment; when 0, you can't create with this environment.
+      example:
+        id: python-3.12
+        name: Python 3.12
+        description: Python environment for isolated workloads
+        image: python:3.12
+        os: linux
+        architecture: amd64
+        language: python
+        languageVersion: '3.12'
+        offeringCount: 3
+    ResourceSnapshot:
+      type: object
+      description: Snapshot of the resources actually allocated to an instance or declared by an offering; providers may add extra resource fields.
+      properties:
+        cpu:
+          type: number
+          description: Number of vCPUs.
+        memoryGiB:
+          type: number
+          description: Memory, in GiB.
+        volumeGiB:
+          type: number
+          description: Working/persistent volume size, in GiB.
+        snapshotGiB:
+          type: number
+          description: Snapshot storage size or billing base, in GiB.
+        gpu:
+          type: array
+          description: Allocated GPU models and counts; usually omitted for CPU-only offerings.
+          items:
+            type: object
+            properties:
+              model:
+                type: string
+                description: GPU model.
+              count:
+                type: integer
+                description: Number of GPUs of this model.
+        environment:
+          type: object
+          additionalProperties: true
+          description: Runtime environment snapshot returned by the provider, such as image, language or framework info.
+      additionalProperties: true
+    SuspensionCapabilities:
+      type: object
+      required: [supported]
+      description: The offering's suspend, resume and wake-on-access semantics; don't infer from supported that files, memory and processes are all kept.
+      properties:
+        supported:
+          type: boolean
+          description: Whether an explicit suspend operation is supported.
+        preservesFilesystem:
+          type: boolean
+          description: Whether workspace files are kept across suspend and resume.
+        preservesMemory:
+          type: boolean
+          description: Whether memory contents are kept across suspend and resume.
+        preservesProcesses:
+          type: boolean
+          description: Whether the original processes survive suspend and resume.
+        capacityReserved:
+          type: boolean
+          description: Whether the provider still reserves compute capacity for the instance while suspended; this can affect cost and resume speed.
+        resumeSupported:
+          type: boolean
+          description: Whether an explicit resume is supported after suspension.
+        resumeOnAccessSupported:
+          type: boolean
+          description: Whether accessing exec/files/ports resumes the instance automatically.
+        resumeOnAccessMode:
+          type: string
+          enum: [NATIVE, ADAPTER, UNSUPPORTED]
+          description: NATIVE=the provider wakes the instance natively; ADAPTER=the xAPI adapter resumes it first, then runs the call; UNSUPPORTED=not available.
+        wakeOperations:
+          type: array
+          description: Operation names that can trigger wake-on-access, such as exec, files.read and ports.connect.
+          items: { type: string }
+        estimatedHourlyUsd:
+          type: string
+          description: Estimated hourly cost while the instance is SUSPENDED, as a USD decimal string.
+    SandboxCapabilities:
+      type: object
+      description: The offering's declaration of standard Sandbox capabilities and provider extensions; check the matching boolean before calling a capability endpoint.
+      properties:
+        exec:
+          type: boolean
+          description: Whether running shell commands is supported.
+        backgroundExec:
+          type: boolean
+          description: Whether background=true is supported, keeping a provider-managed background command session alive after the HTTP response; check this before starting a web server.
+        files:
+          type: boolean
+          description: Whether file read, write and directory listing are supported.
+        terminal:
+          type: boolean
+          description: Whether an interactive terminal is supported; the REST command endpoint still depends on exec.
+        ports:
+          type: boolean
+          description: Whether ports listened on inside the instance can be mapped to external URLs.
+        snapshot:
+          type: boolean
+          description: Whether snapshot features are supported; the actual calls may be provided by extensions.
+        fork:
+          type: boolean
+          description: Whether new instances can be forked from an existing instance/snapshot.
+        gpu:
+          type: boolean
+          description: Whether GPU resources are provided; still check resources.gpu and the specific extensions.
+        extensionIds:
+          type: array
+          description: Allowlist of provider extension IDs you may invoke; don't invoke extensions outside this list.
+          items: { type: string }
+        suspension:
+          allOf:
+            - $ref: '#/components/schemas/SuspensionCapabilities'
+          description: Normalized suspend, resume and auto-wake capabilities.
+      additionalProperties: true
+    OfferingLifecycle:
+      type: object
+      description: The offering's lifecycle capabilities and state retention semantics.
+      properties:
+        suspension:
+          allOf:
+            - $ref: '#/components/schemas/SuspensionCapabilities'
+          description: Suspension support, resume methods, what is kept, and the estimated cost while suspended.
+    OfferingBilling:
+      type: object
+      description: Summary of estimated costs per state, computed from the current rate card and resources; the instance's totalCost is the final cost.
+      properties:
+        currency:
+          type: string
+          enum: [USD]
+          description: Currency used by all price and cost fields.
+        estimatedHourlyUsdByState:
+          type: object
+          additionalProperties: { type: string }
+          description: Estimated hourly cost per state, such as PROVISIONING, RUNNING and SUSPENDED; values are USD decimal strings.
+        computeDefaultState:
+          type: string
+          enum: [RUNNING]
+          description: State that incurs compute charges by default.
+        storageContinuesWhileSuspended:
+          type: boolean
+          description: Whether storage charges such as volumes/snapshots still apply while suspended; false doesn't mean every other charge is zero.
+    RateCardComponent:
+      type: object
+      required: [kind, unit, priceUsd]
+      description: One billing rule; kind determines what it bills on.
+      properties:
+        kind:
+          type: string
+          enum: [STATE_TIME, RESOURCE_TIME, OPERATION]
+          description: STATE_TIME=by time in an instance state; RESOURCE_TIME=by resource amount and time; OPERATION=by number of calls.
+        state:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: Instance state this rule applies to; usually omitted for OPERATION rules.
+        category:
+          type: string
+          enum: [COMPUTE, CAPACITY_RESERVATION, STORAGE, OTHER]
+          description: Cost category, used to group charges on the bill.
+        resource:
+          type: string
+          enum: [CPU, MEMORY_GIB, VOLUME_GIB, SNAPSHOT_GIB, GPU]
+          description: Resource type billed by a RESOURCE_TIME rule.
+        resourceKey:
+          type: string
+          description: Finer-grained resource key, such as a specific GPU model; usually omitted for plain CPU/memory rules.
+        operation:
+          type: string
+          description: Operation name billed by an OPERATION rule.
+        unit:
+          type: string
+          enum: [SECOND, COUNT]
+          description: Billing unit; SECOND for time-based rules, COUNT for call-based rules.
+        priceUsd:
+          type: string
+          description: Price per unit, as a USD decimal string.
+    RateCard:
+      type: object
+      required: [version, currency, components]
+      description: Rate snapshot the server uses to reserve and settle costs.
+      properties:
+        version:
+          type: integer
+          enum: [1, 2]
+          description: Rate card data format version.
+        currency:
+          type: string
+          enum: [USD]
+          description: Rate currency.
+        components:
+          type: array
+          description: Billing rules that make up the total cost.
+          items: { $ref: '#/components/schemas/RateCardComponent' }
+    ProviderSummary:
+      type: object
+      description: Display info for the Sandbox provider that actually serves this offering.
+      properties:
+        name:
+          type: string
+          description: Provider name.
+        logoUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Provider logo URL; null when not configured.
+    Offering:
+      type: object
+      description: Live spec, capability, lifecycle and billing declaration for a Sandbox you can create.
+      required: [id, name, resources, capabilities]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable UUID of the offering; use it in selection.offeringId to pin the choice.
+        name:
+          type: string
+          description: Display name of the offering.
+        description:
+          type: string
+          nullable: true
+          description: What the offering is for and notes on the provider integration.
+        region:
+          type: string
+          nullable: true
+          description: Default/fixed region; null means the provider picks the region or it isn't fixed.
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: Resource snapshot this offering allocates and bills by default.
+        capabilities:
+          allOf:
+            - $ref: '#/components/schemas/SandboxCapabilities'
+          description: Available standard capabilities, extension IDs and suspension semantics.
+        lifecycle:
+          allOf:
+            - $ref: '#/components/schemas/OfferingLifecycle'
+          description: Normalized lifecycle declaration.
+        billing:
+          allOf:
+            - $ref: '#/components/schemas/OfferingBilling'
+          description: Summary of estimated hourly costs per state.
+        rateCard:
+          allOf:
+            - $ref: '#/components/schemas/RateCard'
+          description: Rate rules used for actual reservations and settlement.
+        rateCardVersion:
+          type: integer
+          description: Rate revision number of the offering in the database; older quotes may become invalid after it changes.
+        rollingWindowSeconds:
+          type: integer
+          description: Length of the rolling usage window per reservation (seconds); not the instance's maximum runtime.
+        shutdownGraceSeconds:
+          type: integer
+          description: Shutdown grace period reserved for safe termination (seconds).
+        retentionWindowSeconds:
+          type: integer
+          description: Declared retention window for terminal-state data/provider resources (seconds); not a promise to keep files forever.
+        provider:
+          allOf:
+            - $ref: '#/components/schemas/ProviderSummary'
+          description: Display info for the provider serving this offering.
+      example:
+        id: 11111111-1111-4111-8111-111111111111
+        name: General purpose Sandbox
+        description: Isolated CPU Sandbox with shell, files and ports
+        region: null
+        resources:
+          cpu: 1
+          memoryGiB: 1
+          volumeGiB: 3
+          snapshotGiB: 0
+        capabilities:
+          exec: true
+          files: true
+          ports: true
+          snapshot: true
+          extensionIds: []
+        lifecycle:
+          suspension:
+            supported: true
+            preservesFilesystem: true
+        billing:
+          currency: USD
+          estimatedHourlyUsdByState:
+            RUNNING: '0.07693488'
+            SUSPENDED: '0'
+        rollingWindowSeconds: 300
+        shutdownGraceSeconds: 30
+        retentionWindowSeconds: 600
+        provider:
+          name: Example Sandbox Provider
+          logoUrl: null
+    Quote:
+      type: object
+      description: Short-lived quote matched from requirements, with an estimate of the initial fund reservation; it doesn't create an instance.
+      required: [quoteId, expiresAt, offering, estimatedHourlyUsd]
+      properties:
+        quoteId:
+          type: string
+          description: Signed quote token to pass as selection.quoteId when creating; valid for one logical create only, and retries with the same idempotency key can reuse it.
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the quoteId expires (UTC ISO 8601); after that you must get a new quote.
+        offering:
+          allOf:
+            - $ref: '#/components/schemas/Offering'
+          description: Snapshot of the specific offering and capabilities matched for these requirements.
+        estimatedHourlyUsd:
+          type: string
+          description: Estimated hourly cost of the offering in its default running state, as a USD decimal string; not the final charge.
+        usageReservationUsd:
+          type: string
+          description: Amount expected to be reserved for the first rolling usage window.
+        shutdownReservationUsd:
+          type: string
+          description: Maximum shutdown cost reserved for safely terminating the instance.
+        initialReservationUsd:
+          type: string
+          description: Total initial reservation required before creation, usually usageReservationUsd + shutdownReservationUsd.
+      example:
+        quoteId: eyJhbGciOiJIUzI1NiJ9.REDACTED
+        expiresAt: '2026-08-13T08:30:00.000Z'
+        offering:
+          id: 11111111-1111-4111-8111-111111111111
+          name: General purpose Sandbox
+          resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+          capabilities: { exec: true, files: true, ports: true }
+        estimatedHourlyUsd: '0.07693488'
+        usageReservationUsd: '0.00641124'
+        shutdownReservationUsd: '0.00064112'
+        initialReservationUsd: '0.00705236'
+    Operation:
+      type: object
+      description: Persisted audit record of one lifecycle or data-plane call.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Operation record UUID for log correlation; not the instance ID.
+        idempotencyKey:
+          type: string
+          description: Idempotency key of this operation; the instance ID and this value together decide whether a repeated request is the same operation.
+        type:
+          type: string
+          enum: [CREATE, SUSPEND, RESUME, TERMINATE, EXEC, EXTENSION, FILE_READ, FILE_WRITE, FILE_LIST, PORT_OPEN]
+          description: Operation type. Lifecycle operations change state; EXEC/FILE/PORT/EXTENSION are data-plane calls inside the instance.
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED, TIMED_OUT, CANCELLED]
+          description: Execution status of the operation; an accepted HTTP request doesn't mean it's already SUCCEEDED here.
+        expectedState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          nullable: true
+          description: State a lifecycle operation expects the instance to reach; usually null for data-plane operations.
+        error:
+          type: string
+          nullable: true
+          description: Diagnostic info when the operation fails, times out or is canceled; null on success.
+        input:
+          type: object
+          additionalProperties: true
+          description: Redacted/trimmed summary of the operation input; file writes record only path, encoding and size, never the file content.
+        requestedAt:
+          type: string
+          format: date-time
+          description: When the Gateway accepted the operation request.
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the adapter actually started processing; null if not started yet.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the operation reached a terminal state; null while still running.
+        durationMs:
+          type: integer
+          description: Actual execution time of the operation, in milliseconds; not the instance's total runtime.
+        exitCode:
+          type: integer
+          description: Remote process exit code for EXEC operations; 0 usually means success, non-zero means the command failed even though the HTTP request may have succeeded.
+        stdoutPreview:
+          type: string
+          description: Prefix of standard output kept for auditing; not guaranteed to be the full stdout.
+        stderrPreview:
+          type: string
+          description: Prefix of standard error kept for auditing; not guaranteed to be the full stderr.
+        outputTruncated:
+          type: boolean
+          description: Whether stdoutPreview or stderrPreview was truncated by the log size limit.
+      example:
+        id: 22222222-2222-4222-8222-222222222222
+        idempotencyKey: docs-terminate-example
+        type: TERMINATE
+        status: SUCCEEDED
+        expectedState: TERMINATED
+        error: null
+        requestedAt: '2026-08-13T08:20:00.000Z'
+        startedAt: '2026-08-13T08:20:00.100Z'
+        completedAt: '2026-08-13T08:20:01.200Z'
+        durationMs: 1100
+    State:
+      type: string
+      description: |
+        Canonical Sandbox state: PROVISIONING=acquiring resources; RUNNING=ready for tasks; SUSPENDED=suspended;
+        TERMINATED=terminated and not recoverable; FAILED=terminal state after a provisioning or runtime failure; UNKNOWN=the service temporarily can't confirm the provider state.
+      enum: [PROVISIONING, RUNNING, SUSPENDED, TERMINATED, FAILED, UNKNOWN]
+    StateEvent:
+      type: object
+      description: Provider state change normalized by the Gateway into an event; use sequence to order the instance's state transitions.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Event UUID stored by xAPI.
+        sequence:
+          type: integer
+          description: Event sequence number, monotonically increasing within the current provider allocation; used for deduplication and ordering.
+        eventType:
+          type: string
+          enum: [sandbox.state_changed]
+          description: Canonical event type; currently sandbox.state_changed.
+        previousState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: State before the change; may be omitted for the first event or when the provider doesn't supply it.
+        currentState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: New state confirmed by this event.
+        reason:
+          type: string
+          nullable: true
+          description: Reason for the state change or failure details from the provider; null when there's no reason.
+        effectiveAt:
+          type: string
+          format: date-time
+          description: When the state change actually took effect.
+        observedAt:
+          type: string
+          format: date-time
+          description: When the provider or adapter observed this state.
+        receivedAt:
+          type: string
+          format: date-time
+          description: When the Gateway received and stored the event; may be later than observedAt.
+        timestampSource:
+          type: string
+          enum: [PROVIDER_NATIVE, ADAPTER_OBSERVED, INFERRED]
+          description: Where the timestamp comes from (a native provider event, adapter polling or Gateway inference).
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: Resource snapshot confirmed at the state change.
+        status:
+          type: string
+          enum: [ACCEPTED, PROCESSED, REJECTED]
+          description: How the Gateway handled the event; REJECTED events shouldn't be treated as valid state evidence.
+    UsageSegment:
+      type: object
+      description: A continuous stretch of usage in one state with one resource snapshot; the time basis for cost settlement.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Usage segment UUID.
+        state:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: Canonical instance state during this usage segment.
+        startsAt:
+          type: string
+          format: date-time
+          description: Start time of the usage segment.
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: End time of the usage segment; may be null for an active segment, and no segment should be open at final acceptance.
+        durationSeconds:
+          type: string
+          nullable: true
+          description: Duration in seconds computed by the server from event times, returned as a decimal string to avoid precision loss.
+        amount:
+          type: string
+          nullable: true
+          description: Final settled amount for this usage segment (USD); may be null before settlement.
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: Resource quantity snapshot used for this usage segment.
+        timestampSource:
+          type: string
+          enum: [PROVIDER_NATIVE, ADAPTER_OBSERVED, INFERRED]
+          description: Trusted source of the start/end times.
+        status:
+          type: string
+          enum: [OPEN, CLOSED, SETTLED, UNVERIFIED, VOID]
+          description: OPEN=still metering; CLOSED=ended, awaiting settlement; SETTLED=settled; UNVERIFIED=state times not yet confirmed; VOID=not billed.
+    BillingBreakdownLine:
+      type: object
+      description: Cost line produced by one rate card rule within a billing period.
+      properties:
+        quantity:
+          type: string
+          description: Quantity used; usually seconds for time-based rules and a count for operation rules.
+        amountUsd:
+          type: string
+          description: Cost of this line, as a USD decimal string.
+        component:
+          allOf:
+            - $ref: '#/components/schemas/RateCardComponent'
+          description: Snapshot of the rate rule used to compute this line.
+    BillingBreakdown:
+      type: object
+      description: Auditable breakdown of how the billing period amount was computed.
+      properties:
+        lines:
+          type: array
+          description: Cost lines for each state, resource or operation.
+          items: { $ref: '#/components/schemas/BillingBreakdownLine' }
+        totalUsd:
+          type: string
+          description: Sum of all line amounts.
+        durationSeconds:
+          type: string
+          description: Total billed duration for this billing period (seconds); may be 0 for operation billing.
+      additionalProperties: true
+    BillingPeriod:
+      type: object
+      description: Fund reservation and settlement record for one usage window, shutdown reservation or per-operation charge.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Billing period UUID.
+        kind:
+          type: string
+          enum: [USAGE, SHUTDOWN, OPERATION]
+          description: USAGE=state/resource usage; SHUTDOWN=reservation for safe termination; OPERATION=per-call charge.
+        status:
+          type: string
+          enum: [RESERVED, SETTLED, RELEASED, UNVERIFIED]
+          description: RESERVED=reserved, not yet complete; SETTLED=charged; RELEASED=unused and released; UNVERIFIED=awaiting manual/system review.
+        startsAt:
+          type: string
+          format: date-time
+          description: Start time of the billing period or fund reservation.
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: End time of the billing period; may be null for an active period.
+        amount:
+          type: string
+          nullable: true
+          description: Final settled amount (USD); may not be known yet while RESERVED.
+        breakdown:
+          allOf:
+            - $ref: '#/components/schemas/BillingBreakdown'
+          description: Calculation breakdown for this billing period; may be empty or omitted when nothing was charged.
+    AuditCounts:
+      type: object
+      description: Totals of the four full audit record types for this instance; the details response may embed only the most recent few, so page through the audit endpoint to read them all.
+      properties:
+        operations:
+          type: integer
+          description: Total operation audit records.
+        events:
+          type: integer
+          description: Total state events.
+        usageSegments:
+          type: integer
+          description: Total usage segments.
+        billingPeriods:
+          type: integer
+          description: Total billing period records.
+    Sandbox:
+      type: object
+      description: Current state, resources and cost of a Sandbox instance, with an optional audit summary.
+      required: [id, offeringId, observedState, totalCost, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Instance UUID; every query, execution, file, port, audit and cleanup endpoint uses this value.
+        idempotencyKey:
+          type: string
+          description: Idempotency key used when creating the instance; useful for history search and checking for duplicate creates.
+        offeringId:
+          type: string
+          format: uuid
+          description: UUID of the offering actually selected; returned as a concrete value even when created by requirements.
+        desiredState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          nullable: true
+          description: Target state of the most recent lifecycle operation; may be null when no state change is in progress.
+        observedState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: Actual provider state most recently confirmed by the Gateway; rely on this field to decide whether the instance can run tasks or has been cleaned up.
+        lifecyclePhase:
+          type: string
+          enum: [PROVISIONING, RUNNING, SUSPENDING, SUSPENDED, RESUMING, TERMINATING, TERMINATED, FAILED, UNKNOWN]
+          description: Human-readable phase derived from desiredState and observedState; it distinguishes the SUSPENDING/RESUMING/TERMINATING transitions.
+        lastConfirmedState:
+          allOf:
+            - $ref: '#/components/schemas/State'
+          description: Most recent state confirmed by the provider or by reliable event evidence; useful for troubleshooting when observedState=UNKNOWN, but not a substitute for the latest state.
+        stateVersion:
+          type: integer
+          description: Version number incremented on every valid state change; use it to detect updates and prevent out-of-order overwrites.
+        policy:
+          type: object
+          description: Instance lifecycle policy in effect at creation.
+          properties:
+            resumeOnAccess:
+              type: boolean
+              description: Whether accessing a suspended instance tries to resume it automatically; the offering must support it.
+        autoResume:
+          type: boolean
+          deprecated: true
+          description: Kept for older clients; new clients use policy.resumeOnAccess.
+        resources:
+          allOf:
+            - $ref: '#/components/schemas/ResourceSnapshot'
+          description: Actual resource snapshot frozen at creation, used to check capabilities and costs.
+        reservedUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: Time up to which the current rolling cost reservation extends; not a guaranteed lifetime for the instance and not an auto-termination time.
+        totalCost:
+          type: string
+          description: Cumulative actual cost of billing periods the server has settled (USD decimal string); don't substitute your own wall-clock calculation.
+        terminatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the instance was first confirmed TERMINATED; null if not terminated yet.
+        createdAt:
+          type: string
+          format: date-time
+          description: When the Gateway created the instance record and started provisioning.
+        updatedAt:
+          type: string
+          format: date-time
+          description: When the instance record's state, cost or audit summary was last updated.
+        offering:
+          allOf:
+            - $ref: '#/components/schemas/Offering'
+          description: Full snapshot of the selected offering; some list responses may omit it.
+        operations:
+          type: array
+          description: Recent operation audit summary; page through audit?kind=operations for the full records.
+          items: { $ref: '#/components/schemas/Operation' }
+        events:
+          type: array
+          description: Recent state events; use audit?kind=events for the full records.
+          items: { $ref: '#/components/schemas/StateEvent' }
+        usageSegments:
+          type: array
+          description: Recent usage segments; at final acceptance every segment should have endsAt and none should be OPEN.
+          items: { $ref: '#/components/schemas/UsageSegment' }
+        billingPeriods:
+          type: array
+          description: Returned billing periods and settlement details; totalCost should equal the sum of SETTLED billing period amounts.
+          items: { $ref: '#/components/schemas/BillingPeriod' }
+        auditCounts:
+          allOf:
+            - $ref: '#/components/schemas/AuditCounts'
+          description: Totals of the four full audit record types.
+      example:
+        id: 33333333-3333-4333-8333-333333333333
+        idempotencyKey: docs-create-example
+        offeringId: 11111111-1111-4111-8111-111111111111
+        desiredState: RUNNING
+        observedState: RUNNING
+        lifecyclePhase: RUNNING
+        lastConfirmedState: RUNNING
+        stateVersion: 1
+        policy: { resumeOnAccess: false }
+        resources: { cpu: 1, memoryGiB: 1, volumeGiB: 3 }
+        totalCost: '0.00021371'
+        terminatedAt: null
+        createdAt: '2026-08-13T08:19:50.000Z'
+        updatedAt: '2026-08-13T08:20:00.000Z'
+        operations: []
+        events: []
+        usageSegments: []
+        billingPeriods: []
+        auditCounts:
+          operations: 2
+          events: 1
+          usageSegments: 1
+          billingPeriods: 2
+    CommandRequest:
+      type: object
+      description: Runs one non-interactive shell command in a RUNNING instance.
+      required: [command]
+      properties:
+        command:
+          type: string
+          minLength: 1
+          maxLength: 100000
+          description: Full command passed to the provider's shell. Don't put your XAPI-Key or other secrets in the command or its output.
+        cwd:
+          type: string
+          maxLength: 4096
+          description: Working directory for the command; defaults to the offering/adapter workspace when omitted.
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: Environment variables for this command only; sensitive values may end up in the provider's process environment, so use them with care.
+        timeoutSeconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          default: 60
+          description: Maximum run time of the remote command in seconds; on timeout the wait stops and a failure is recorded, but the Sandbox itself isn't terminated.
+        background:
+          type: boolean
+          default: false
+          description: |
+            true=start the command in a provider-managed async session and return immediately; suited to web servers that listen on a port.
+            Available only when offering.capabilities.backgroundExec=true. Don't use shell nohup/& instead:
+            some providers reclaim the command session and its child processes when the foreground exec request ends.
+    CommandResult:
+      type: object
+      description: Result of the remote process. HTTP 201 means the call returned successfully; check exitCode to see whether the command itself succeeded.
+      required: [exitCode, stdout, stderr]
+      properties:
+        exitCode:
+          type: integer
+          description: Remote process exit code of a foreground command. With background=true, 0 only means the background session was accepted; it doesn't prove the process is ready or will succeed.
+        stdout:
+          type: string
+          description: Standard output of the command. It may be empty or truncated by the output limit.
+        stderr:
+          type: string
+          description: Standard error of the command. Non-empty output doesn't necessarily mean failure; check exitCode as well.
+        truncated:
+          type: boolean
+          description: Whether stdout or stderr was truncated for exceeding the response limit; when true, write the full artifact to a file and download it.
+        background:
+          type: object
+          description: Provider-managed session identifiers, returned only when background=true; for auditing and troubleshooting, not a public access credential.
+          required: [sessionId, commandId]
+          properties:
+            sessionId:
+              type: string
+              description: ID of the command session xAPI creates at the provider and keeps until the Sandbox is terminated.
+            commandId:
+              type: string
+              description: Async command ID returned by the provider.
+      example:
+        exitCode: 0
+        stdout: "XAPI_SANDBOX_OK=42\n"
+        stderr: ''
+        truncated: false
+    FileWriteRequest:
+      type: object
+      description: Writes text or binary content to the Sandbox workspace.
+      required: [path, content, encoding]
+      properties:
+        path:
+          type: string
+          maxLength: 4096
+          description: Target path relative to the workspace; it can't contain parent-directory segments.
+        content:
+          type: string
+          description: Raw text for utf8; for base64, a Base64 string without the `data:*;base64,` prefix.
+        encoding:
+          type: string
+          enum: [utf8, base64]
+          description: Encoding of content; binary files must use base64.
+    FileWriteResult:
+      type: object
+      description: Write result confirmed by the provider; adapters may add fields such as byte counts or checksums.
+      properties:
+        path:
+          type: string
+          description: Workspace path actually written, after normalization.
+        written:
+          type: boolean
+          description: Whether the provider confirmed the write completed.
+        bytes:
+          type: integer
+          description: Number of bytes actually written; omitted when the provider doesn't return it.
+      additionalProperties: true
+    FileResult:
+      type: object
+      description: File content read from the Sandbox workspace.
+      required: [path, content, encoding]
+      properties:
+        path:
+          type: string
+          description: Workspace path actually read.
+        content:
+          type: string
+          description: File content; text when encoding=utf8, and Base64 without a data URI prefix when encoding=base64.
+        encoding:
+          type: string
+          enum: [utf8, base64]
+          description: Encoding currently used by content.
+      example:
+        path: result.txt
+        content: XAPI_SANDBOX_OK=42
+        encoding: utf8
+    FileEntry:
+      type: object
+      description: One entry from a workspace directory listing; providers may add fields such as timestamps or permissions.
+      properties:
+        name:
+          type: string
+          description: Base name of the file or directory.
+        path:
+          type: string
+          description: Path relative to the listing root or the workspace.
+        type:
+          type: string
+          enum: [file, dir, other]
+          description: Entry type; a regular file, a directory or a provider-specific type.
+        size:
+          type: integer
+          description: File size in bytes; may be omitted for directories or unknown sizes.
+      additionalProperties: true
+    FileListResult:
+      type: object
+      required: [entries]
+      description: File/directory entries listed by path and depth.
+      properties:
+        entries:
+          type: array
+          description: Listing result; an empty array means the path exists but has no matching entries, while a missing path usually returns an error.
+          items: { $ref: '#/components/schemas/FileEntry' }
+    PortResult:
+      type: object
+      description: Temporary external URL and optional authentication details for reaching a port listened on inside the Sandbox.
+      required: [port, url]
+      properties:
+        port:
+          type: integer
+          description: Mapped port inside the Sandbox.
+        url:
+          type: string
+          format: uri
+          description: Temporary public/proxy URL; a returned URL doesn't guarantee that the app, DNS and TLS are ready, so verify a marker with an external request.
+        token:
+          type: string
+          description: Short-lived token for the temporary URL; it's sensitive, so don't write it to logs or public pages.
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: HTTP request headers you must send with the URL; may contain sensitive temporary credentials.
+      example:
+        port: 8080
+        url: https://preview.example.invalid
+        token: REDACTED
+        headers: {}
+    ExtensionRequest:
+      type: object
+      description: Invokes a provider extension that the offering explicitly declares.
+      properties:
+        input:
+          type: object
+          additionalProperties: true
+          description: Extension-specific input; field meanings are defined by the input schema/provider docs for that extensionId.
+        idempotencyKey:
+          type: string
+          maxLength: 160
+          description: Idempotency key for the extension call; must be reused on retries of extensions that may change state or incur charges.
+    ExtensionResult:
+      type: object
+      description: Extension-specific output. It has no fields shared across providers; interpret it using the output schema for the extensionId.
+      properties:
+        result:
+          type: object
+          additionalProperties: true
+          description: Actual data returned by the provider extension, such as connection info, snapshot results or mount status.
+      additionalProperties: true
+    HistoryPage:
+      type: object
+      description: Paginated Sandbox instance history, with state totals under the same filters.
+      required: [items, total, page, pageSize, totalPages, stateCounts]
+      properties:
+        items:
+          type: array
+          description: Instance records on this page; same shape as the Sandbox details, though some nested audit fields may be omitted or trimmed.
+          items: { $ref: '#/components/schemas/Sandbox' }
+        total:
+          type: integer
+          description: Total instances matching the current filters, not just the count on this page.
+        page:
+          type: integer
+          description: Current page number, starting at 1.
+        pageSize:
+          type: integer
+          description: Maximum records per page used for this request.
+        totalPages:
+          type: integer
+          description: Total pages, computed from total and pageSize.
+        stateCounts:
+          type: object
+          additionalProperties: { type: integer }
+          description: Instance counts by observedState under the same filters, for checking the ACTIVE/terminal split.
+      example:
+        items: []
+        total: 33
+        page: 1
+        pageSize: 20
+        totalPages: 2
+        stateCounts:
+          PROVISIONING: 0
+          RUNNING: 0
+          SUSPENDED: 0
+          TERMINATED: 32
+          FAILED: 1
+    AuditPage:
+      type: object
+      description: Paginated results for a single audit stream; kind determines the shape of items.
+      required: [kind, items, total, page, pageSize, totalPages]
+      properties:
+        kind:
+          type: string
+          enum: [operations, events, usageSegments, billingPeriods]
+          description: Audit type returned on this page; it also determines the schema of each record in items.
+        items:
+          type: array
+          description: |
+            Audit records: operations map to Operation; events to StateEvent;
+            usageSegments to UsageSegment; billingPeriods to BillingPeriod.
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/Operation'
+              - $ref: '#/components/schemas/StateEvent'
+              - $ref: '#/components/schemas/UsageSegment'
+              - $ref: '#/components/schemas/BillingPeriod'
+        total:
+          type: integer
+          description: Total audit records of this kind.
+        page:
+          type: integer
+          description: Current page number, starting at 1.
+        pageSize:
+          type: integer
+          description: Maximum records per page used for this request.
+        totalPages:
+          type: integer
+          description: Total pages in this audit stream.
+      example:
+        kind: operations
+        items:
+          - id: 22222222-2222-4222-8222-222222222222
+            type: TERMINATE
+            status: SUCCEEDED
+            expectedState: TERMINATED
+        total: 5
+        page: 1
+        pageSize: 100
+        totalPages: 1

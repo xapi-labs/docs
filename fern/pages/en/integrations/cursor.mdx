@@ -1,0 +1,108 @@
+---
+title: Cursor
+subtitle: Override the OpenAI Base URL and API Key in Cursor. One key for every model.
+---
+
+[Cursor](https://cursor.com) has a built-in OpenAI-compatible client. Override the base URL and API Key
+to connect to xAPI, with no proxy or extra configuration. xAPI's direct upstream subdomains accept `Authorization: Bearer`,
+which matches the header Cursor sends by default.
+
+<Steps>
+  <Step title="Install Cursor">
+    Go to [cursor.com](https://cursor.com) and download and install the version for your platform.
+  </Step>
+
+  <Step title="Create an API Key">
+    Go to the [xapi.to](https://xapi.to) console → **API Keys** → create a new key.
+    The key looks like `sk-xapi-...`.
+  </Step>
+
+  <Step title="Open the Models settings">
+    - macOS: `⌘ + ,` or menu → Cursor → Settings
+    - Windows / Linux: `Ctrl + ,` or File → Preferences → Settings
+    - Select **Models** on the left
+  </Step>
+
+  <Step title="Configure xAPI">
+    Scroll to the **OpenAI API Key** section:
+
+    | Field | Value |
+    | --- | --- |
+    | OpenAI API Key | `sk-xapi-...` |
+    | Override OpenAI Base URL | `https://ai.xapi.to/v1` |
+
+    Click **Verify**. A green ✓ means the connection works.
+
+    <Warning>
+      The Base URL must **end with `/v1`**. Cursor requires it.
+    </Warning>
+  </Step>
+
+  <Step title="Choose models">
+    In the **Models** list:
+
+    1. **Uncheck** all of Cursor's built-in OpenAI models (`gpt-4`, `gpt-4o`, etc.),
+       so they don't keep going through Cursor's own endpoint and using up your subscription quota
+    2. Click **+ Add Model** and add models that xAPI supports:
+
+    ```
+    gpt-5.5
+    claude-opus-4-7
+    claude-sonnet-4-6
+    claude-haiku-4-5
+    ```
+
+    For the full list, see [Models and pricing](/en/ai/models).
+
+    3. Check the models you just added
+  </Step>
+
+  <Step title="Verify">
+    Open any file and press `⌘ + L` to open Chat:
+
+    - Pick `claude-opus-4-7` in the model selector at the top
+    - Send a test request, such as "Explain what this file does"
+
+    You should see streaming output right away. In the [xapi.to](https://xapi.to) console → Usage Records,
+    you can view the record of this call.
+  </Step>
+</Steps>
+
+## Pin to a specific upstream (optional)
+
+Just change the Base URL:
+
+| Upstream | Override OpenAI Base URL |
+| --- | --- |
+| SkyAPI (widest model selection) | `https://skyapi.p.xapi.to/v1` |
+| SuperToken Max (official source) | `https://supertoken-max.p.xapi.to/v1` |
+| SuperToken reverse-engineered (lowest cost) | `https://supertoken.p.xapi.to/v1` |
+
+<Note>
+  Cursor supports only one base URL and doesn't support failover across upstreams.
+  For automatic switching across upstreams, use [Claude Code](/en/ai/integrations/claude-code) with aggregated routing instead.
+</Note>
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Verify shows a red ✗ / connection fails">
+    - The Base URL is missing the `/v1` suffix. The correct format is `https://ai.xapi.to/v1`
+    - The key contains spaces or invisible characters. Copy and paste it again
+    - Your company network blocks the request. Turn off your VPN / proxy and try again
+  </Accordion>
+
+  <Accordion title="model not found">
+    - The model name must match the [model list](/en/ai/models) exactly
+    - SkyAPI uses hyphens in names: `claude-opus-4-7` ✓, `claude-opus-4.7` ✗
+  </Accordion>
+
+  <Accordion title="Some features still use the official service">
+    - Cursor's Tab autocomplete **always goes through Cursor's own service**. No third-party gateway can take it over
+    - The base URL override applies to: Chat, Compose, `⌘+K` and other explicit AI features
+  </Accordion>
+
+  <Accordion title="Checking costs">
+    - Costs are not shown in Cursor. Go to the [xapi.to](https://xapi.to) console → Usage Records
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,92 @@
+---
+title: Chatbox and other desktop clients
+subtitle: Connect desktop and web chat clients to xAPI. A standard OpenAI provider configuration is all you need.
+---
+
+Desktop and web chat clients (Chatbox, NextChat, LobeChat, OpenWebUI, etc.)
+all use the OpenAI protocol with `Authorization: Bearer` authentication, which is fully compatible with xAPI.
+
+<Tabs>
+  <Tab title="Chatbox">
+    Settings → API Settings → set Model Provider to **OpenAI**:
+
+    | Field | Value |
+    | --- | --- |
+    | API Host | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+    | Model | `claude-opus-4-7` or another model in the [model list](/en/ai/models) |
+  </Tab>
+
+  <Tab title="NextChat">
+    Settings → Custom Endpoint:
+
+    | Field | Value |
+    | --- | --- |
+    | OpenAI Endpoint | `https://ai.xapi.to` |
+    | API Key | `sk-xapi-...` |
+
+    <Note>
+      NextChat appends `/v1/chat/completions` automatically, so the Endpoint must **not** include `/v1`.
+    </Note>
+  </Tab>
+
+  <Tab title="LobeChat">
+    Settings → Language Model → OpenAI → Show more:
+
+    | Field | Value |
+    | --- | --- |
+    | API Proxy URL | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+  </Tab>
+
+  <Tab title="OpenWebUI">
+    Admin Panel → Connections → OpenAI:
+
+    | Field | Value |
+    | --- | --- |
+    | Base URL | `https://ai.xapi.to/v1` |
+    | API Key | `sk-xapi-...` |
+  </Tab>
+</Tabs>
+
+## Calling directly with an SDK
+
+<CodeBlocks>
+  <CodeBlock title="Python">
+    ```python
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url="https://ai.xapi.to/v1",
+        api_key="sk-xapi-...",
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": "Hello"}],
+    )
+    print(response.choices[0].message.content)
+    ```
+  </CodeBlock>
+
+  <CodeBlock title="TypeScript">
+    ```typescript
+    import OpenAI from 'openai';
+
+    const client = new OpenAI({
+      baseURL: 'https://ai.xapi.to/v1',
+      apiKey: 'sk-xapi-...',
+    });
+
+    const response = await client.chat.completions.create({
+      model: 'gpt-5.5',
+      messages: [{ role: 'user', content: 'Hello' }],
+    });
+    console.log(response.choices[0].message.content);
+    ```
+  </CodeBlock>
+</CodeBlocks>
+
+## Model list
+
+See [Models and pricing](/en/ai/models).

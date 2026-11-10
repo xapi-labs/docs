@@ -1,0 +1,148 @@
+---
+title: Sandbox overview and core concepts
+subtitle: Isolated cloud environments for AI agents, selected by capability, with one lifecycle, per-second billing and a complete audit trail.
+---
+
+xAPI Sandbox lets applications and AI agents use different cloud compute providers through one Consumer API.
+The caller describes the resources, capabilities and budget it needs. The Gateway picks a sellable spec, creates the instance, normalizes its state,
+records usage and handles settlement. Provider credentials are held by the platform and never reach prompts, user code or the Sandbox environment.
+
+```text
+AI / Application
+      │  xAPI Key + resource requirements
+      ▼
+xAPI Sandbox Gateway
+      │  quote · lifecycle · audit · billing
+      ├── Daytona / E2B / Runloop / Modal / Vercel
+      ├── Cloudflare Sandbox
+      └── RunPod GPU
+```
+
+<CardGroup cols={3}>
+  <Card title="Select by capability" icon="sliders">
+    Ask for `exec`, `files`, `ports`, CPU, memory, GPU, region and so on. The Gateway picks a spec from the
+    Offerings currently on sale that meets the requirements and fits the budget.
+  </Card>
+  <Card title="One lifecycle" icon="arrows-rotate">
+    Whatever the underlying provider calls its states, the caller only deals with the unified
+    `PROVISIONING / RUNNING / SUSPENDED / TERMINATED / FAILED`.
+  </Card>
+  <Card title="Audit and settlement" icon="receipt">
+    Every create, execute, file, port and state operation is logged. State events, usage segments and settlement bills can each be queried on their own.
+  </Card>
+</CardGroup>
+
+## What it's good for
+
+| Scenario | What Sandbox provides | Typical result |
+| --- | --- | --- |
+| AI coding agent | `exec` + `files` | Edit code, run tests, return a patch or report |
+| CI reproduction and auto-fix | Isolated dependencies and command execution | Reproduction logs, fix results, test status |
+| Data analysis | File upload + Python/Node environment | JSON, CSV, charts or an analysis report |
+| Parallel agents | One instance per agent | Dependencies, branches and temp files don't interfere with each other |
+| Web previews and temporary APIs | `files` + `exec` + `ports` | A temporary public URL you can open in a browser |
+| GPU jobs | GPU specs or provider extensions | Inference, training or public connection info |
+| Resumable long tasks | `suspend` / `resume` | Keep the file system and cut idle-time cost |
+
+<Tip>
+  If the task only needs to run one command, use [`sandbox run`](/en/sandbox/cli#run-in-one-step-recommended) first.
+  It quotes, creates, waits, executes and terminates for you, so it carries the lowest risk of leftover instances.
+</Tip>
+
+## Four core objects
+
+### Offering
+
+An Offering is a sellable spec that a provider registered and the platform verified. It declares:
+
+- CPU, memory, volume, GPU and region;
+- `exec`, `files`, `ports`, snapshot and extension capabilities;
+- whether suspend and resume are supported, and whether the file system, memory or processes are kept while suspended;
+- the estimated hourly price for each state and the underlying billing components.
+
+Offerings are a live catalog. Don't hard-code any provider's capabilities or prices into your agent; read the catalog or get a quote before running.
+
+### Quote
+
+A Quote resolves resource requirements, capability conditions and a price cap into a short-lived selection. A quote doesn't create an instance,
+so it's a good way to confirm the provider, spec, running price and initial hold before you spend money.
+
+```json
+{
+  "requirements": {
+    "cpu": { "min": 2 },
+    "memoryGiB": { "min": 4 },
+    "capabilities": ["exec", "files"]
+  },
+  "maxEstimatedHourlyUsd": "0.20"
+}
+```
+
+### Sandbox instance
+
+An instance is the actual billed resource. A create call returning `202` or `PROVISIONING` only means the request was accepted; you can run commands
+only after the state observed by the server reaches `RUNNING`. When the task is done you must wait for `TERMINATED`; don't treat
+"terminate request sent" as cleanup complete.
+
+```text
+PROVISIONING ──► RUNNING ──► SUSPENDED ──► RUNNING
+                     │                         │
+                     └──────────► TERMINATED ◄┘
+
+Unrecoverable error at any stage ───────► FAILED
+```
+
+### Audit and billing
+
+Each instance has four independent kinds of evidence:
+
+| Kind | Question it answers |
+| --- | --- |
+| `operations` | Who called CREATE, EXEC, FILE, PORT, SUSPEND or TERMINATE, and when? What was the result? |
+| `events` | When did the provider-confirmed state change? What was the time source? |
+| `usageSegments` | How long did each state segment last, what resources did it use, and how much did it cost? |
+| `billingPeriods` | Have the hold, usage, shutdown and other bills been settled? |
+
+A successful task means more than `exitCode = 0`. It also requires that the artifacts verified, the instance reached a terminal state,
+no usage segment or bill is left open, and the final list of active instances has no leftovers from this task.
+
+## Pick a provider or let the Gateway choose
+
+By default, use automatic selection: the Gateway chooses from the Offerings that are currently healthy, have the required capabilities and stay within budget.
+Pin a provider only when:
+
+- you have to verify a specific provider adapter;
+- you need a provider-specific capability, such as Cloudflare web previews or RunPod connection info;
+- the task depends on specific suspend, snapshot or network semantics;
+- you need a reproducible acceptance environment.
+
+<Warning>
+  "Supports Sandbox" doesn't mean every provider supports the same set of capabilities. A GPU Offering may only provide a managed
+  connection extension without standard `exec/files`, and the current Cloudflare Offering may not support explicit
+  `suspend/resume`. Always go by the live Offering declaration.
+</Warning>
+
+## Security model
+
+1. The xAPI Key is sent to the xAPI Gateway only by the client or the agent's tool execution layer.
+2. Provider API keys exist only in the registered Provider Adapter and are never visible to consumers.
+3. Don't put the xAPI Key in prompts, remote commands, environment dumps, files or logs.
+4. Create requests use an idempotency key so a lost response doesn't lead to a duplicate billed instance.
+5. Every multi-step flow cleans up in `finally` / a shell `trap`, and checks the server-side terminal state at the end.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="CLI guide" href="/en/sandbox/cli" icon="terminal">
+    From one-step runs to files, ports, suspend, GPU and audit
+  </Card>
+  <Card title="REST API and live testing" href="/en/sandbox/api-flow" icon="code">
+    The full call flow, curl scripts and an API Explorer that uses the production Gateway by default
+  </Card>
+  <Card title="AI + Sandbox Agent" href="/en/sandbox/openai-agents" icon="robot">
+    Plan with DeepSeek and let xAPI Sandbox execute the tools
+  </Card>
+  <Card title="Testing and logs" href="/en/sandbox/testing" icon="clipboard-check">
+    test.xapi.to, the acceptance checklist and how to find things in the Console
+  </Card>
+</CardGroup>

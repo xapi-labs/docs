@@ -1,0 +1,126 @@
+---
+title: Billing
+subtitle: Per-token billing, two-phase hold → settlement, and API key limits.
+---
+
+## Pricing model
+
+All xAPI AI endpoints use **dynamic per-token pricing** (`billingType: PER_TOKEN`):
+
+```
+actual cost = inputTokens × inputPrice
+            + outputTokens × outputPrice
+            + cacheCreationTokens × cacheCreationPrice
+            + cacheReadTokens × cacheReadPrice
+```
+
+Each model has its own price. See [Models and pricing](/en/ai/models) for the full price list.
+
+## Call lifecycle
+
+<Steps>
+  <Step title="Request arrives">
+    The hold amount is calculated from `estimatedMaxTokens` (default 4096) and the model's unit price.
+  </Step>
+  <Step title="Atomic hold">
+    A Redis Lua script places the hold atomically. If the balance is insufficient or the API key limit is exceeded → HTTP 402, and the request is rejected.
+  </Step>
+  <Step title="Forward to upstream">
+    The request is forwarded with upstream credentials maintained by the platform.
+  </Step>
+  <Step title="Settlement">
+    Upstream succeeds: the actual token usage is read from the body → actualCost is calculated → an atomic Lua script refunds the difference or charges the extra.
+
+    Upstream fails: the full hold is released.
+  </Step>
+  <Step title="Persistence">
+    Database: `User.balance` is debited, a `Transaction` entry is written, and a `UsageRecord` is created.
+    The response header returns `X-AI-Cost = actualCost`.
+  </Step>
+</Steps>
+
+<Tip>
+  Key design: **two-phase hold → settlement** plus atomic Redis Lua scripts.
+  This prevents overcharging under concurrency and avoids tying up funds when the upstream fails.
+</Tip>
+
+## Tiered pricing
+
+Some Anthropic models have tiered prices for large contexts:
+
+```json
+"tiers": [
+  {
+    "inputTokenThreshold": 200000,
+    "inputPricePerToken": 0.0000020,
+    "outputPricePerToken": 0.0000100
+  }
+]
+```
+
+When the total prompt context of a single request
+(`inputTokens + cacheCreationTokens + cacheReadTokens`)
+reaches `inputTokenThreshold`, **the whole request** is billed at the higher tier.
+
+## Separate pricing for cache tokens
+
+Claude models support prompt caching, and xAPI bills each cache type separately:
+
+- `cacheCreationInputTokens` — first cache write, priced at about the input price × 1.25
+- `cacheReadInputTokens` — cache hit read, priced at about the input price × 0.10
+
+<Note>
+  OpenAI's `cached_tokens` is nested inside `prompt_tokens`,
+  which differs from Anthropic's separate fields. xAPI normalizes both when parsing tokens,
+  so the `inputTokens` field always means "regular, non-cached input tokens".
+</Note>
+
+## API key balance limits
+
+Each `sk-xapi-...` key can have its own `balanceLimit` (a USD cap):
+
+| Setting | Behavior |
+| --- | --- |
+| `balanceLimit = 50.00` | Once the key's total charges reach $50, further calls return HTTP 402 |
+| `balanceLimit = null` | No cap; only the account-level balance pool applies |
+
+Typical uses:
+
+- **Teams**: issue separate keys with their own limits to members, CI and agents,
+  so one key's abnormal spending can't drain the whole balance
+- **Project isolation**: give each project its own limit, which makes cost attribution and isolating anomalies easier
+
+The `usedBalance` field records the key's total charges in real time. You can check it in the console.
+
+## Top up
+
+Top up on the Billing page of the [xapi.to](https://xapi.to) console. Supported methods:
+
+- **Crypto**: USDT / USDC on BSC, confirmed automatically through the x402 protocol
+- **Fiat**: credit card via Stripe
+
+## Charges for failed requests
+
+| Scenario | Charged? |
+| --- | --- |
+| Upstream returns 5xx | No, the full hold is released |
+| Upstream returns 4xx | No, the full hold is released |
+| Gateway error (401 / 402 / 400) | No, the request never reached the hold phase |
+| Upstream connection timeout / network error | No, the full hold is released |
+| Client disconnects from a non-streaming request | No, the upstream response was not received |
+| **Client interrupts a streaming request** | **Yes**, charged by an estimate based on the output streamed so far |
+| Upstream returns 2xx but the body contains a business error | Yes, charged by actual tokens |
+
+## How platform prices are set
+
+xAPI's public price = each upstream's public price × the platform markup multiplier:
+
+| Model tier | Markup | Examples |
+| --- | --- | --- |
+| Premium (flagship) | 1.10 × | Claude Opus, GPT-4.5 |
+| Standard (mainstream) | 1.15 × | Claude Sonnet, GPT-4o |
+| Budget (economy) | 1.20 × | Claude Haiku, GPT-4o-mini |
+| Free (ultra-low price) | 1.30 × | DeepSeek, Flash-Lite series |
+
+Flagship models have a high price per request, so their markup is lower; low-price models need to cover basic operating costs, so their markup is slightly higher.
+Cost prices come from each upstream's official pricing page and are **synced once a week**.

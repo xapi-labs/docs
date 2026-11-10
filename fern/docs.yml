@@ -4,11 +4,6 @@ instances:
 
 title: xAPI Documentation
 
-# 默认中文；英文译文放在 fern/translations/en/（同路径），没译的页面自动用中文兜底
-translations:
-  - lang: zh
-    default: true
-  - lang: en
 
 logo:
   href: /
@@ -18,130 +13,156 @@ logo:
 
 favicon: ./assets/logo.png
 
+# 中文 / English 两个标签做语言切换：中文不加前缀，原有地址不变；English 在 /en/ 下
+tabs:
+  zh:
+    display-name: 中文
+    skip-slug: true
+  en:
+    display-name: English
+    slug: en
+
 navigation:
-  - section: 产品总览
-    slug: home
-    contents:
-      - page: 选择产品
-        path: pages/overview.mdx
-        slug: overview
-
-  - section: AI Gateway
-    slug: ai
-    contents:
-      - page: AI Gateway 概览
-        path: pages/ai/overview.mdx
-        slug: overview
-      - page: 快速开始
-        path: pages/quickstart.mdx
-        slug: quickstart
-      - page: 模型与价格
-        path: pages/models.mdx
-        slug: models
-      - page: 设计原则
-        path: pages/principles.mdx
-        slug: principles
-      - section: 开发工具集成
-        slug: integrations
+  - tab: zh
+    layout:
+      - section: 产品总览
+        slug: home
         contents:
-          - page: Claude Code
-            path: pages/integrations/claude-code.mdx
-            slug: claude-code
-          - page: Codex
-            path: pages/integrations/codex.mdx
-            slug: codex
-          - page: Cursor
-            path: pages/integrations/cursor.mdx
-            slug: cursor
-          - page: OpenClaw
-            path: pages/integrations/openclaw.mdx
-            slug: openclaw
-          - page: Hermes Agent
-            path: pages/integrations/hermes.mdx
-            slug: hermes
-          - page: Continue.dev
-            path: pages/integrations/continue-dev.mdx
-            slug: continue-dev
-          - page: Cline
-            path: pages/integrations/cline.mdx
-            slug: cline
-          - page: Windsurf
-            path: pages/integrations/windsurf.mdx
-            slug: windsurf
-          - page: Chatbox 等桌面客户端
-            path: pages/integrations/chatbox.mdx
-            slug: chatbox
-      - page: AI API 参考
-        path: pages/api.mdx
-        slug: api
-      - page: AI 计费机制
-        path: pages/billing.mdx
-        slug: billing
+          - page: 选择产品
+            path: pages/overview.mdx
+            slug: overview
 
-  - section: Sandbox
-    slug: sandbox
-    icon: fa-solid fa-cube
-    collapsed: open-by-default
-    contents:
-      - page: 概览与核心概念
-        path: pages/sandbox/overview.mdx
-        slug: overview
-      - page: 产品边界与能力模型
-        path: pages/sandbox/scope.mdx
-        slug: scope
-      - page: CLI 使用指南
-        path: pages/sandbox/cli.mdx
-        slug: cli
-      - page: Cloudflare 专属能力
-        path: pages/sandbox/cloudflare.mdx
-        slug: cloudflare
-      - page: REST API 调用流程
-        path: pages/sandbox/api-flow.mdx
-        slug: api-flow
-      - page: 全部 REST API 与测试
-        path: pages/sandbox/api-reference.mdx
-        slug: api
-      - api: API Reference
-        slug: api-reference
-        icon: fa-solid fa-code
-        paginated: true
-        display-errors: true
-        playground:
-          environments:
-            - Production
-            - Test
-        layout:
-          - discovery
-          - lifecycle
-          - execution
-          - audit
-      - page: AI + Sandbox Agent
-        path: pages/sandbox/openai-agents.mdx
-        slug: openai-agents
-      - page: 测试环境与日志
-        path: pages/sandbox/testing.mdx
-        slug: testing
+      - section: AI Gateway
+        slug: ai
+        contents:
+          - page: AI Gateway 概览
+            path: pages/ai/overview.mdx
+            slug: overview
+          - page: 快速开始
+            path: pages/quickstart.mdx
+            slug: quickstart
+          - page: 模型与价格
+            path: pages/models.mdx
+            slug: models
+          - page: 设计原则
+            path: pages/principles.mdx
+            slug: principles
+          - section: 开发工具集成
+            slug: integrations
+            contents:
+              - page: Claude Code
+                path: pages/integrations/claude-code.mdx
+                slug: claude-code
+              - page: Codex
+                path: pages/integrations/codex.mdx
+                slug: codex
+              - page: Cursor
+                path: pages/integrations/cursor.mdx
+                slug: cursor
+              - page: OpenClaw
+                path: pages/integrations/openclaw.mdx
+                slug: openclaw
+              - page: Hermes Agent
+                path: pages/integrations/hermes.mdx
+                slug: hermes
+              - page: Continue.dev
+                path: pages/integrations/continue-dev.mdx
+                slug: continue-dev
+              - page: Cline
+                path: pages/integrations/cline.mdx
+                slug: cline
+              - page: Windsurf
+                path: pages/integrations/windsurf.mdx
+                slug: windsurf
+              - page: Chatbox 等桌面客户端
+                path: pages/integrations/chatbox.mdx
+                slug: chatbox
+          - page: AI API 参考
+            path: pages/api.mdx
+            slug: api
+          - page: AI 计费机制
+            path: pages/billing.mdx
+            slug: billing
 
-  - section: 服务商接入
-    slug: provider
-    icon: fa-solid fa-store
-    contents:
-      - page: 服务商接入
-        path: pages/provider/overview.mdx
-        slug: overview
-      - page: OpenAPI 导入规范
-        path: pages/provider/openapi.mdx
-        slug: openapi
-      - page: 计费与收益
-        path: pages/provider/pricing.mdx
-        slug: pricing
+      - section: Sandbox
+        slug: sandbox
+        icon: fa-solid fa-cube
+        collapsed: open-by-default
+        contents:
+          - page: 概览与核心概念
+            path: pages/sandbox/overview.mdx
+            slug: overview
+          - page: 产品边界与能力模型
+            path: pages/sandbox/scope.mdx
+            slug: scope
+          - page: CLI 使用指南
+            path: pages/sandbox/cli.mdx
+            slug: cli
+          - page: Cloudflare 专属能力
+            path: pages/sandbox/cloudflare.mdx
+            slug: cloudflare
+          - page: REST API 调用流程
+            path: pages/sandbox/api-flow.mdx
+            slug: api-flow
+          - page: 全部 REST API 与测试
+            path: pages/sandbox/api-reference.mdx
+            slug: api
+          - api: API Reference
+            slug: api-reference
+            icon: fa-solid fa-code
+            paginated: true
+            display-errors: true
+            playground:
+              environments:
+                - Production
+                - Test
+            layout:
+              - discovery
+              - lifecycle
+              - execution
+              - audit
+          - page: AI + Sandbox Agent
+            path: pages/sandbox/openai-agents.mdx
+            slug: openai-agents
+          - page: 测试环境与日志
+            path: pages/sandbox/testing.mdx
+            slug: testing
 
-  - section: 帮助
-    slug: help
-    contents:
-      - page: 常见问题
-        path: pages/faq.mdx
-        slug: faq
+      - section: 服务商接入
+        slug: provider
+        icon: fa-solid fa-store
+        contents:
+          - page: 服务商接入
+            path: pages/provider/overview.mdx
+            slug: overview
+          - page: OpenAPI 导入规范
+            path: pages/provider/openapi.mdx
+            slug: openapi
+          - page: 计费与收益
+            path: pages/provider/pricing.mdx
+            slug: pricing
+
+      - section: 帮助
+        slug: help
+        contents:
+          - page: 常见问题
+            path: pages/faq.mdx
+            slug: faq
+
+  - tab: en
+    layout:
+      - section: For providers
+        slug: provider
+        contents:
+          - page: Provider onboarding
+            path: pages/en/provider/overview.mdx
+            slug: overview
+          - page: OpenAPI import rules
+            path: pages/en/provider/openapi.mdx
+            slug: openapi
+          - page: Billing and earnings
+            path: pages/en/provider/pricing.mdx
+            slug: pricing
 
 colors:
   accent-primary:

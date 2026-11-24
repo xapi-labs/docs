@@ -65,7 +65,7 @@ npx xapi-to provider spec-rules
 | `x-xapi-billing.tokenPricing` | 按 token 单价：`{ inputPricePerToken, outputPricePerToken }` |
 | `x-xapi-billing.costPerResource` / `resourceCountJsonPath` | 按资源计费的单价和计数路径 |
 | `x-xapi-streaming` | `{ supportsStreaming: true, streamFormat: "sse" }`，支持 `sse` 和 `ndjson` |
-| `x-xapi-hidden` | 下架这个接口：不再展示，网关返回 410 |
+| `x-xapi-delisted` | 设为 `true` 下架这个接口：不再展示，网关返回 410；新修订里设回 `false` 恢复。旧名 `x-xapi-hidden` 会返回 400 |
 
 各计费方式的字段和预扣说明见 [计费与收益](/provider/pricing)。
 

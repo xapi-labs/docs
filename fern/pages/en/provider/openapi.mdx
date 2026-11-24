@@ -65,7 +65,7 @@ On top of standard OpenAPI, `x-xapi-*` fields carry the platform settings in the
 | `x-xapi-billing.tokenPricing` | Per-token prices: `{ inputPricePerToken, outputPricePerToken }` |
 | `x-xapi-billing.costPerResource` / `resourceCountJsonPath` | Unit price and count path for per-resource billing |
 | `x-xapi-streaming` | `{ supportsStreaming: true, streamFormat: "sse" }`; `sse` and `ndjson` are supported |
-| `x-xapi-hidden` | Hides the endpoint from the docs (it can still be called) |
+| `x-xapi-hidden` | Unpublishes the endpoint: it is no longer listed, and the gateway returns 410 |
 
 For the fields of each billing type and how pre-authorization works, see [Billing and earnings](/en/provider/pricing).
 
@@ -112,4 +112,4 @@ After the import the service is a draft: enter the value of `X-API-Key` under **
 
 ## Importing again
 
-When you import into an existing service from **Manage APIs → Import** in the workspace, endpoints are matched by method + path. Existing endpoints get their parameters, request body, responses and empty descriptions updated, while billing, hidden flags, private upstream headers and other settings are kept; new endpoints are added, and no existing endpoint is deleted.
+When you import into an existing service from **Manage APIs → Import** in the workspace, endpoints are matched by method + path. Existing endpoints get their parameters, request body, responses and empty descriptions updated, while billing, unpublished (delisted) state, private upstream headers and other settings are kept; new endpoints are added, and no existing endpoint is deleted.
